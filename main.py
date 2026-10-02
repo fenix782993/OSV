@@ -10,338 +10,8 @@ app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
 SECRET=os.getenv("APP_SECRET","change-this-secret-on-render").encode(); OWNER="Fenix_Dinero"; PASS_SCORE=28; QUESTION_COUNT=33
 ROLES=["Начальник ОСВ","Заместитель начальника ОСВ","Стажёр","Старший инспектор","Инспектор","Инструктор"]
 RANKS=["Без звания","Полковник","Генерал"]
-QUESTIONS=[
-  [
-    "Какова основная задача ОСВ?",
-    [
-      "Организация мероприятий",
-      "Контроль соблюдения сотрудниками законности и дисциплины",
-      "Выдача удостоверений",
-      "Организация дорожного движения"
-    ],
-    1
-  ],
-  [
-    "Что должен сделать сотрудник ОСВ при получении информации о нарушении сотрудником?",
-    [
-      "Проверить информацию",
-      "Сразу наказать",
-      "Опубликовать информацию",
-      "Игнорировать"
-    ],
-    0
-  ],
-  [
-    "Основной принцип служебной проверки?",
-    [
-      "Объективность",
-      "Предвзятость",
-      "Сокрытие информации",
-      "Заранее назначенное наказание"
-    ],
-    0
-  ],
-  [
-    "Как сотрудник ОСВ должен общаться с проверяемым сотрудником?",
-    [
-      "С угрозами",
-      "Корректно и в рамках полномочий",
-      "Провоцировать конфликт",
-      "Игнорировать"
-    ],
-    1
-  ],
-  [
-    "Для чего используется служебный рапорт?",
-    [
-      "Для развлечения",
-      "Для личной переписки",
-      "Для фиксации служебной информации",
-      "Для публикации новостей"
-    ],
-    2
-  ],
-  [
-    "Что делать при конфликте интересов?",
-    [
-      "Скрыть его",
-      "Продолжить проверку в личных интересах",
-      "Сообщить руководству и действовать по процедуре",
-      "Удалить материалы"
-    ],
-    2
-  ],
-  [
-    "Что необходимо сделать перед служебным действием, если это предусмотрено регламентом?",
-    [
-      "Представиться и сообщить основание действий",
-      "Скрыть должность",
-      "Сразу применить максимальные меры",
-      "Отказаться от фиксации"
-    ],
-    0
-  ],
-  [
-    "Что такое служебная субординация?",
-    [
-      "Личные просьбы руководителя",
-      "Установленный порядок взаимодействия и подчинения",
-      "Отказ от распоряжений",
-      "Самостоятельное изменение структуры"
-    ],
-    1
-  ],
-  [
-    "Можно ли использовать служебные полномочия для личной выгоды?",
-    [
-      "Да",
-      "Да, при высоком звании",
-      "Только если никто не заметит",
-      "Нет"
-    ],
-    3
-  ],
-  [
-    "Что делать при выявлении нарушения вне компетенции ОСВ?",
-    [
-      "Самостоятельно принять любое решение",
-      "Скрыть нарушение",
-      "Передать информацию компетентному подразделению",
-      "Удалить сведения"
-    ],
-    2
-  ],
-  [
-    "Что важно при оценке доказательств?",
-    [
-      "Популярность свидетеля",
-      "Звание сотрудника",
-      "Количество сообщений",
-      "Достоверность, относимость и законность получения"
-    ],
-    3
-  ],
-  [
-    "Что делать при обнаружении ошибки в служебном документе?",
-    [
-      "Исправить установленным способом",
-      "Удалить документ",
-      "Оставить ошибку",
-      "Обвинить другого сотрудника"
-    ],
-    0
-  ],
-  [
-    "Что является превышением служебных полномочий?",
-    [
-      "Выполнение обязанностей",
-      "Составление рапорта",
-      "Доклад руководителю",
-      "Действия за пределами предоставленных полномочий"
-    ],
-    3
-  ],
-  [
-    "Как обращаться с конфиденциальной служебной информацией?",
-    [
-      "Публиковать в соцсетях",
-      "Передавать знакомым",
-      "Передавать в общий чат",
-      "Не разглашать лицам без соответствующего доступа"
-    ],
-    3
-  ],
-  [
-    "Что делать при поступлении жалобы на сотрудника?",
-    [
-      "Удалить жалобу",
-      "Рассмотреть или передать по установленной процедуре",
-      "Сразу наказать сотрудника",
-      "Игнорировать"
-    ],
-    1
-  ],
-  [
-    "Что помогает избежать необоснованного обвинения?",
-    [
-      "Слухи",
-      "Личная неприязнь",
-      "Проверка фактов и материалов",
-      "Внешний вид сотрудника"
-    ],
-    2
-  ],
-  [
-    "Как поступить с законным распоряжением руководителя в рамках его компетенции?",
-    [
-      "Исполнить установленным порядком",
-      "Игнорировать",
-      "Изменить самостоятельно",
-      "Передать постороннему"
-    ],
-    0
-  ],
-  [
-    "Зачем фиксировать результаты служебной проверки?",
-    [
-      "Чтобы скрыть ошибки",
-      "Чтобы заменить все доказательства",
-      "Чтобы сохранить информацию о действиях и выводах",
-      "Чтобы избежать жалоб"
-    ],
-    2
-  ],
-  [
-    "Как действовать при конфликте с проверяемым сотрудником?",
-    [
-      "Оскорблять",
-      "Использовать полномочия для мести",
-      "Отказаться от фиксации",
-      "Сохранять спокойствие и действовать в рамках полномочий"
-    ],
-    3
-  ],
-  [
-    "Что является ключевым требованием к сотруднику ОСВ?",
-    [
-      "Личные связи",
-      "Законность, объективность и дисциплина",
-      "Возможность менять правила",
-      "Игнорирование процедур"
-    ],
-    1
-  ],
-  [
-    "Имеет ли сотрудник право использовать служебную информацию в личных целях?",
-    [
-      "Да",
-      "Только после смены",
-      "Только с разрешения коллеги",
-      "Нет"
-    ],
-    3
-  ],
-  [
-    "Что должен сделать сотрудник при получении информации о коррупционном нарушении?",
-    [
-      "Скрыть информацию",
-      "Сообщить и действовать по установленной процедуре",
-      "Обсудить с друзьями",
-      "Удалить сообщение"
-    ],
-    1
-  ],
-  [
-    "Что является основанием для проведения проверки?",
-    [
-      "Проверяемая информация о возможном нарушении",
-      "Личная неприязнь",
-      "Слухи без проверки",
-      "Желание наказать сотрудника"
-    ],
-    0
-  ],
-  [
-    "Может ли сотрудник ОСВ самостоятельно изменить установленный порядок проведения проверки?",
-    [
-      "Да, всегда",
-      "Да, если ему удобнее",
-      "Нет, только в рамках предусмотренной процедуры",
-      "Да, если проверяемый согласен"
-    ],
-    2
-  ],
-  [
-    "Что необходимо соблюдать при работе со служебными материалами?",
-    [
-      "Сохранность и установленный порядок доступа",
-      "Свободное распространение",
-      "Передачу друзьям",
-      "Удаление после прочтения"
-    ],
-    0
-  ],
-  [
-    "Что должен содержать служебный рапорт?",
-    [
-      "Только мнение автора",
-      "Достоверные сведения об обстоятельствах события",
-      "Личные оскорбления",
-      "Непроверенные слухи"
-    ],
-    1
-  ],
-  [
-    "Как должен поступить сотрудник при обнаружении нарушения со стороны своего знакомого?",
-    [
-      "Скрыть нарушение",
-      "Помочь избежать проверки",
-      "Действовать объективно и по процедуре",
-      "Уничтожить материалы"
-    ],
-    2
-  ],
-  [
-    "Допустимо ли давление на свидетеля при служебной проверке?",
-    [
-      "Да",
-      "Да, если дело важное",
-      "Только по просьбе руководителя",
-      "Нет"
-    ],
-    3
-  ],
-  [
-    "Что следует сделать при недостатке информации для принятия решения?",
-    [
-      "Придумать недостающие сведения",
-      "Провести дополнительную проверку",
-      "Сразу наказать сотрудника",
-      "Закрыть дело без проверки"
-    ],
-    1
-  ],
-  [
-    "Что означает объективность сотрудника ОСВ?",
-    [
-      "Отсутствие личной заинтересованности и учет фактов",
-      "Поддержка своего знакомого",
-      "Наказание независимо от обстоятельств",
-      "Доверие только одной стороне"
-    ],
-    0
-  ],
-  [
-    "Как следует хранить материалы служебной проверки?",
-    [
-      "В личном телефоне",
-      "В общем публичном чате",
-      "В установленном для служебных материалов порядке",
-      "У знакомого сотрудника"
-    ],
-    2
-  ],
-  [
-    "Что делать, если проверяемый сотрудник предоставляет дополнительные доказательства?",
-    [
-      "Игнорировать их",
-      "Рассмотреть их в рамках проверки",
-      "Сразу удалить",
-      "Запретить их предоставление"
-    ],
-    1
-  ],
-  [
-    "Какой принцип должен лежать в основе работы ОСВ?",
-    [
-      "Личная выгода",
-      "Предвзятость",
-      "Законность, объективность и ответственность",
-      "Сокрытие нарушений"
-    ],
-    2
-  ]
-]
+QUESTIONS = ['На каком основании снимать маску с задержанного?', 'В каком случае можно одеть мешок на голову задержанного и на каком основании.', 'Что такое диспозиция в УК?', 'С какого звания можно задержать своего сотрудника?', 'Виды мед.помощи.', 'Может ли инспектор ОСВ проводить ОПМ, ОРД и на каком основании?', 'Что запрещено делать во время переговоров?', 'Можно ли обезвредить пояс смертника на человеке?', 'Основание на задержание сотрудника МВД?', 'Какие есть виды оружия', 'В каких случаях можно открыть огонь в городе.', 'Что будете делать если сотрудник употребит мятную пудру.', 'С какого момента начинается уголовное преследование.', 'При каких обстоятельствах можно применить спец средства, какие требования должны быть соблюдены перед их применением', 'На каком основание вы можете задержать сотрудника.', 'С какого звания можно задерживать сотрудников МВД.', 'На каком основании вы можете изъять лицензии на оружие и на права.', 'На каком основании вы будете требовать покинуть граждан место проведения задержания или других различных мероприятий.', 'На каком основании человек имеет право на жизнь.(конституция)', 'Основание на задержание(находящее лицо в розыске)', 'на каком основание задержанный имеет право на адвоката? (конституция)', 'Ваши первые действия при переговорах?', 'чем отличается 67 ук от 20.5 коап ?', 'ваши действия если при проверке документов у гражданина не стоит дата рождения?', 'на каком основание вы будете замерять и снимать тонировку?', 'о чем гласит 12.5 ВУ?', 'что вы сделаете если увидети гражданина на парковке ГИБДД?', 'о чем гласит 4.3 ВУ?', 'как правильно должен представляться инспектор ОСВ?', 'как правильно обращаться к руководству УГИБДД?', 'основные задачи ОСВ', 'Иеархия Федеральных законов?', 'кто подчиняется ОСВ?']
+
 def db():
  c=sqlite3.connect(DB,timeout=20); c.row_factory=sqlite3.Row; c.execute("PRAGMA foreign_keys=ON")
  c.executescript("CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY AUTOINCREMENT,nickname TEXT UNIQUE NOT NULL,position TEXT NOT NULL,password TEXT NOT NULL,role TEXT NOT NULL DEFAULT 'Стажёр',created INTEGER NOT NULL,role_approved INTEGER NOT NULL DEFAULT 0,last_login INTEGER,role_requested TEXT,rank TEXT NOT NULL DEFAULT 'Без звания'); CREATE TABLE IF NOT EXISTS questions(id INTEGER PRIMARY KEY AUTOINCREMENT,body TEXT NOT NULL,options TEXT NOT NULL,correct INTEGER NOT NULL,points INTEGER NOT NULL DEFAULT 1,active INTEGER NOT NULL DEFAULT 1); CREATE TABLE IF NOT EXISTS attempts(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,score INTEGER NOT NULL DEFAULT 0,total INTEGER NOT NULL DEFAULT 33,passed INTEGER NOT NULL DEFAULT 0,answers TEXT NOT NULL DEFAULT '{}',created INTEGER NOT NULL,started INTEGER,finished INTEGER,status TEXT NOT NULL DEFAULT 'started',FOREIGN KEY(user_id) REFERENCES users(id)); CREATE TABLE IF NOT EXISTS exam_requests(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'pending',created INTEGER NOT NULL,reviewed INTEGER,reviewed_by TEXT,FOREIGN KEY(user_id) REFERENCES users(id)); CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER,nickname TEXT NOT NULL,event TEXT NOT NULL,details TEXT NOT NULL DEFAULT '',created INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS attempt_questions(attempt_id INTEGER NOT NULL,question_id INTEGER NOT NULL,body_snapshot TEXT NOT NULL,answer TEXT NOT NULL DEFAULT '',mark INTEGER,reviewed_by TEXT,reviewed_at INTEGER,PRIMARY KEY(attempt_id,question_id),FOREIGN KEY(attempt_id) REFERENCES attempts(id)); CREATE TABLE IF NOT EXISTS notifications(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,title TEXT NOT NULL,body TEXT NOT NULL,created INTEGER NOT NULL,seen INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS personnel_notes(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,kind TEXT NOT NULL,body TEXT NOT NULL,actor TEXT NOT NULL,created INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS chat_messages(id INTEGER PRIMARY KEY AUTOINCREMENT,room TEXT NOT NULL,sender_id INTEGER NOT NULL,recipient_id INTEGER,body TEXT NOT NULL,created INTEGER NOT NULL,FOREIGN KEY(sender_id) REFERENCES users(id),FOREIGN KEY(recipient_id) REFERENCES users(id)); CREATE TABLE IF NOT EXISTS user_history(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,actor TEXT NOT NULL,field TEXT NOT NULL,old_value TEXT,new_value TEXT,created INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS user_permissions(user_id INTEGER PRIMARY KEY,permissions TEXT NOT NULL DEFAULT '[]');")
@@ -379,20 +49,27 @@ def require(req,staff=False,owner=False):
  return u
 class Register(BaseModel): nickname:str=Field(min_length=3,max_length=32); position:str=Field(min_length=2,max_length=60); password:str=Field(min_length=6,max_length=100)
 class Login(BaseModel): nickname:str; password:str
-class QuestionIn(BaseModel): body:str=Field(min_length=3,max_length=700); options:list[str]; correct:int; points:int=Field(default=1,ge=1,le=1); active:bool=True
+class QuestionIn(BaseModel): body:str=Field(min_length=3,max_length=700); options:list[str]=Field(default_factory=list); correct:int=0; points:int=Field(default=1,ge=1,le=1); active:bool=True
 class Answers(BaseModel): answers:dict[str,str]
 class RoleIn(BaseModel): role:str
 
 def validate_question(x: QuestionIn):
- if len(x.options) != 4: raise HTTPException(400, 'Должно быть ровно 4 варианта ответа')
+ if len(x.options) not in (0,4): raise HTTPException(400, 'Оставьте варианты пустыми для письменного вопроса или укажите ровно 4 варианта')
  if any(not isinstance(o, str) or not o.strip() or len(o) > 300 for o in x.options): raise HTTPException(400, 'Каждый вариант должен содержать 1–300 символов')
- if x.correct not in range(4): raise HTTPException(400, 'Правильный ответ должен быть от 0 до 3')
+ if x.options and x.correct not in range(4): raise HTTPException(400, 'Правильный ответ должен быть от 0 до 3')
  if not x.body.strip(): raise HTTPException(400, 'Введите текст вопроса')
 @app.on_event('startup')
 def startup():
- c=db(); n=c.execute('SELECT COUNT(*) FROM questions').fetchone()[0]
- if n==0:
-  for body,options,correct in QUESTIONS:c.execute('INSERT INTO questions(body,options,correct,points,active) VALUES(?,?,?,1,1)',(body,json.dumps(options,ensure_ascii=False),correct))
+ c=db()
+ # Keep stable question IDs for existing attempts, but refresh the active exam bank.
+ rows=c.execute('SELECT id FROM questions ORDER BY id LIMIT 33').fetchall()
+ for i,body in enumerate(QUESTIONS):
+  if i < len(rows): c.execute("UPDATE questions SET body=?,options='[]',correct=0,points=1,active=1 WHERE id=?",(body,rows[i]['id']))
+  else: c.execute("INSERT INTO questions(body,options,correct,points,active) VALUES(? , '[]', 0, 1, 1)",(body,))
+ ids=[r['id'] for r in c.execute('SELECT id FROM questions ORDER BY id LIMIT 33').fetchall()]
+ if ids:
+  marks=','.join('?' for _ in ids)
+  c.execute(f'UPDATE questions SET active=0 WHERE id NOT IN ({marks})',ids)
  owner=c.execute('SELECT * FROM users WHERE nickname=?',(OWNER,)).fetchone()
  if not owner:c.execute('INSERT INTO users(nickname,position,password,role,created,role_approved,role_requested) VALUES(?,?,?,?,?,1,?)',(OWNER,'Владелец ОСВ',pw_hash(os.getenv('OWNER_PASSWORD','ChangeMe_123!')),'Владелец',int(time.time()),'Владелец'))
  else:c.execute("UPDATE users SET role='Владелец',role_approved=1,role_requested='Владелец' WHERE nickname=?",(OWNER,))
@@ -459,7 +136,7 @@ def start_exam(req: Request):
    if not approval or approval['status'] != 'approved': raise HTTPException(403, 'Сначала получите одобрение заявки на аттестацию')
   active = c.execute("SELECT id FROM attempts WHERE user_id=? AND status='started' ORDER BY id DESC LIMIT 1", (u['id'],)).fetchone()
   if active: return {'ok': True, 'attempt_id': active['id'], 'status': 'started', 'resumed': True}
-  qs = c.execute("SELECT id,body,options FROM questions WHERE active=1 AND options!='[]' ORDER BY RANDOM() LIMIT ?", (QUESTION_COUNT,)).fetchall()
+  qs = c.execute("SELECT id,body,options FROM questions WHERE active=1 ORDER BY RANDOM() LIMIT ?", (QUESTION_COUNT,)).fetchall()
   if len(qs) < QUESTION_COUNT: raise HTTPException(400, f'Недостаточно активных вопросов: нужно {QUESTION_COUNT}, доступно {len(qs)}')
   now = int(time.time())
   cur = c.execute("INSERT INTO attempts(user_id,score,total,passed,answers,created,started,status) VALUES(?,0,33,0,'{}',?,?,'started')", (u['id'], now, now))
