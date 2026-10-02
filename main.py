@@ -9,6 +9,7 @@ app=FastAPI(title="ОСВ — Аттестация",version="2.0.0")
 app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
 SECRET=os.getenv("APP_SECRET","change-this-secret-on-render").encode(); OWNER="Fenix_Dinero"; PASS_SCORE=28; QUESTION_COUNT=33
 ROLES=["Начальник ОСВ","Заместитель начальника ОСВ","Стажёр","Старший инспектор","Инспектор","Инструктор"]
+RANKS=["Без звания","Полковник","Генерал"]
 QUESTIONS=[
   [
     "Какова основная задача ОСВ?",
@@ -343,10 +344,10 @@ QUESTIONS=[
 ]
 def db():
  c=sqlite3.connect(DB,timeout=20); c.row_factory=sqlite3.Row; c.execute("PRAGMA foreign_keys=ON")
- c.executescript("CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY AUTOINCREMENT,nickname TEXT UNIQUE NOT NULL,position TEXT NOT NULL,password TEXT NOT NULL,role TEXT NOT NULL DEFAULT 'Стажёр',created INTEGER NOT NULL,role_approved INTEGER NOT NULL DEFAULT 0,last_login INTEGER,role_requested TEXT); CREATE TABLE IF NOT EXISTS questions(id INTEGER PRIMARY KEY AUTOINCREMENT,body TEXT NOT NULL,options TEXT NOT NULL,correct INTEGER NOT NULL,points INTEGER NOT NULL DEFAULT 1,active INTEGER NOT NULL DEFAULT 1); CREATE TABLE IF NOT EXISTS attempts(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,score INTEGER NOT NULL DEFAULT 0,total INTEGER NOT NULL DEFAULT 33,passed INTEGER NOT NULL DEFAULT 0,answers TEXT NOT NULL DEFAULT '{}',created INTEGER NOT NULL,started INTEGER,finished INTEGER,status TEXT NOT NULL DEFAULT 'started',FOREIGN KEY(user_id) REFERENCES users(id)); CREATE TABLE IF NOT EXISTS exam_requests(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'pending',created INTEGER NOT NULL,reviewed INTEGER,reviewed_by TEXT,FOREIGN KEY(user_id) REFERENCES users(id)); CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER,nickname TEXT NOT NULL,event TEXT NOT NULL,details TEXT NOT NULL DEFAULT '',created INTEGER NOT NULL);")
+ c.executescript("CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY AUTOINCREMENT,nickname TEXT UNIQUE NOT NULL,position TEXT NOT NULL,password TEXT NOT NULL,role TEXT NOT NULL DEFAULT 'Стажёр',created INTEGER NOT NULL,role_approved INTEGER NOT NULL DEFAULT 0,last_login INTEGER,role_requested TEXT,rank TEXT NOT NULL DEFAULT 'Без звания'); CREATE TABLE IF NOT EXISTS questions(id INTEGER PRIMARY KEY AUTOINCREMENT,body TEXT NOT NULL,options TEXT NOT NULL,correct INTEGER NOT NULL,points INTEGER NOT NULL DEFAULT 1,active INTEGER NOT NULL DEFAULT 1); CREATE TABLE IF NOT EXISTS attempts(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,score INTEGER NOT NULL DEFAULT 0,total INTEGER NOT NULL DEFAULT 33,passed INTEGER NOT NULL DEFAULT 0,answers TEXT NOT NULL DEFAULT '{}',created INTEGER NOT NULL,started INTEGER,finished INTEGER,status TEXT NOT NULL DEFAULT 'started',FOREIGN KEY(user_id) REFERENCES users(id)); CREATE TABLE IF NOT EXISTS exam_requests(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'pending',created INTEGER NOT NULL,reviewed INTEGER,reviewed_by TEXT,FOREIGN KEY(user_id) REFERENCES users(id)); CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER,nickname TEXT NOT NULL,event TEXT NOT NULL,details TEXT NOT NULL DEFAULT '',created INTEGER NOT NULL);")
  # additive migrations for existing databases
  cols={r['name'] for r in c.execute('PRAGMA table_info(users)')}
- for name,ddl in [('role_approved','INTEGER NOT NULL DEFAULT 0'),('last_login','INTEGER'),('role_requested','TEXT')]:
+ for name,ddl in [('role_approved','INTEGER NOT NULL DEFAULT 0'),('last_login','INTEGER'),('role_requested','TEXT'),('rank',"TEXT NOT NULL DEFAULT 'Без звания'")]:
   if name not in cols: c.execute(f'ALTER TABLE users ADD COLUMN {name} {ddl}')
  acols={r['name'] for r in c.execute('PRAGMA table_info(attempts)')}
  for name,ddl in [('started','INTEGER'),('finished','INTEGER'),('status',"TEXT NOT NULL DEFAULT 'started'")]:
@@ -373,8 +374,8 @@ def current(req):
 def require(req,staff=False,owner=False):
  u=current(req)
  if not u: raise HTTPException(401,'Войдите в аккаунт')
- if staff and u['role'] not in ('Владелец','Инструктор'):raise HTTPException(403,'Недостаточно прав')
- if owner and u['role']!='Владелец':raise HTTPException(403,'Только владелец может одобрять заявки')
+ if staff and u['role'] not in ('Владелец','Инструктор','Начальник ОСВ'):raise HTTPException(403,'Недостаточно прав')
+ if owner and u['role'] not in ('Владелец','Начальник ОСВ'):raise HTTPException(403,'Недостаточно прав: требуется владелец или начальник ОСВ')
  return u
 class Register(BaseModel): nickname:str=Field(min_length=3,max_length=32); position:str=Field(min_length=2,max_length=60); password:str=Field(min_length=6,max_length=100)
 class Login(BaseModel): nickname:str; password:str
@@ -399,7 +400,7 @@ def banner():
  return FileResponse(p,media_type='image/jpeg')
 @app.get('/api/health')
 def health():return {'status':'online','service':'OSV Attestation'}
-def user_dict(u):return {'id':u['id'],'nickname':u['nickname'],'position':u['position'],'role':u['role'],'role_approved':bool(u['role_approved']),'role_requested':u['role_requested'],'last_login':u['last_login']}
+def user_dict(u):return {'id':u['id'],'nickname':u['nickname'],'position':u['position'],'role':u['role'],'role_approved':bool(u['role_approved']),'role_requested':u['role_requested'],'last_login':u['last_login'],'rank':u['rank'] if 'rank' in u.keys() else 'Без звания'}
 @app.post('/api/register')
 def register(x:Register,response:Response):
  nick=x.nickname.strip(); role=x.position.strip()
@@ -475,7 +476,7 @@ def delete_question(qid:int,req:Request):
  require(req,staff=True);c=db();c.execute('DELETE FROM questions WHERE id=?',(qid,));c.commit();c.close();return {'ok':True}
 @app.get('/api/admin/users')
 def admin_users(req:Request):
- require(req,staff=True);c=db();rows=c.execute('SELECT id,nickname,position,role,role_approved,role_requested,created,last_login FROM users ORDER BY created DESC').fetchall();c.close();return [dict(r) for r in rows]
+ require(req,staff=True);c=db();rows=c.execute('SELECT id,nickname,position,role,role_approved,role_requested,created,last_login,rank FROM users ORDER BY created DESC').fetchall();c.close();return [dict(r) for r in rows]
 @app.get('/api/admin/role-requests')
 def role_requests(req:Request):
  require(req,owner=True);c=db();rows=c.execute("SELECT id,nickname,position,role_requested,created FROM users WHERE role_approved=0 AND nickname<>? ORDER BY created",(OWNER,)).fetchall();c.close();return [dict(r) for r in rows]
@@ -503,9 +504,31 @@ def decide_exam(rid:int,decision:str,req:Request):
 def set_role(uid:int,x:RoleIn,req:Request):
  actor=require(req,owner=True)
  if x.role not in ROLES:raise HTTPException(400,'Недопустимая должность')
- c=db();cur=c.execute('UPDATE users SET role=?,role_requested=?,role_approved=1 WHERE id=? AND nickname<>?',(x.role,x.role,uid,OWNER));u=c.execute('SELECT * FROM users WHERE id=?',(uid,)).fetchone()
+ if actor['role']!='Владелец' and x.role=='Начальник ОСВ':
+  c=db();existing=c.execute('SELECT role FROM users WHERE id=? AND nickname<>?',(uid,OWNER)).fetchone();c.close()
+  if not existing or existing['role']!='Начальник ОСВ':raise HTTPException(403,'Назначать начальника ОСВ может только Fenix_Dinero')
+ c=db();cur=c.execute("UPDATE users SET role=?,role_requested=?,role_approved=1,rank=CASE WHEN ? IN ('Начальник ОСВ','Заместитель начальника ОСВ') THEN rank ELSE 'Без звания' END WHERE id=? AND nickname<>?",(x.role,x.role,x.role,uid,OWNER));u=c.execute('SELECT * FROM users WHERE id=?',(uid,)).fetchone()
  if not cur.rowcount:c.close();raise HTTPException(404,'Пользователь не найден')
  audit(c,actor,'Должность изменена',f"{u['nickname']} · {x.role}");c.commit();c.close();return {'ok':True}
+@app.delete('/api/admin/exam-requests/{rid}')
+def delete_exam_request(rid:int,req:Request):
+ actor=require(req,owner=True);c=db();r=c.execute('SELECT r.*,u.nickname FROM exam_requests r JOIN users u ON u.id=r.user_id WHERE r.id=?',(rid,)).fetchone()
+ if not r:c.close();raise HTTPException(404,'Заявка не найдена')
+ audit(c,actor,'Заявка на аттестацию удалена',f"{r['nickname']} · заявка №{rid}");c.execute('DELETE FROM exam_requests WHERE id=?',(rid,));c.commit();c.close();return {'ok':True}
+@app.patch('/api/admin/users/{uid}/rank')
+def set_rank(uid:int,x:RoleIn,req:Request):
+ actor=require(req,owner=True)
+ if x.role not in RANKS:raise HTTPException(400,'Недопустимое звание')
+ c=db();u=c.execute('SELECT * FROM users WHERE id=? AND nickname<>?',(uid,OWNER)).fetchone()
+ if not u:c.close();raise HTTPException(404,'Пользователь не найден')
+ if u['role'] not in ('Начальник ОСВ','Заместитель начальника ОСВ') and x.role!='Без звания':c.close();raise HTTPException(400,'Звание можно назначать только начальнику или заместителю ОСВ')
+ c.execute('UPDATE users SET rank=? WHERE id=?',(x.role,uid));audit(c,actor,'Звание изменено',f"{u['nickname']} · {x.role}");c.commit();c.close();return {'ok':True,'rank':x.role}
+@app.delete('/api/admin/users/{uid}')
+def delete_user(uid:int,req:Request):
+ actor=require(req,owner=True);c=db();u=c.execute('SELECT * FROM users WHERE id=? AND nickname<>?',(uid,OWNER)).fetchone()
+ if not u:c.close();raise HTTPException(404,'Пользователь не найден или защищённый аккаунт')
+ audit(c,actor,'Пользователь удалён',f"{u['nickname']} · {u['role']}")
+ c.execute('DELETE FROM exam_requests WHERE user_id=?',(uid,));c.execute('DELETE FROM attempts WHERE user_id=?',(uid,));c.execute('DELETE FROM users WHERE id=?',(uid,));c.commit();c.close();return {'ok':True}
 @app.post('/api/submit')
 def submit(x:Answers,req:Request):
  u=require(req);c=db()
