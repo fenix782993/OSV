@@ -142,8 +142,7 @@ def start_exam(req: Request):
   cur = c.execute("INSERT INTO attempts(user_id,score,total,passed,answers,created,started,status) VALUES(?,0,33,0,'{}',?,?,'started')", (u['id'], now, now))
   aid = cur.lastrowid
   for q in qs:
-   options = json.loads(q['options'] or '[]')
-   if len(options) != 4: raise HTTPException(400, f'Вопрос №{q["id"]} должен иметь 4 варианта ответа')
+   # Written-response question: participant types an answer; choices are not required.
    c.execute("INSERT INTO attempt_questions(attempt_id,question_id,body_snapshot,answer) VALUES(?,?,?,'')", (aid,q['id'],q['body']))
   audit(c,u,'Аттестация начата',f'Попытка №{aid}')
   c.commit()
