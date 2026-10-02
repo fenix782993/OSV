@@ -382,6 +382,12 @@ class Login(BaseModel): nickname:str; password:str
 class QuestionIn(BaseModel): body:str=Field(min_length=3,max_length=700); options:list[str]; correct:int; points:int=Field(default=1,ge=1,le=1); active:bool=True
 class Answers(BaseModel): answers:dict[str,str]
 class RoleIn(BaseModel): role:str
+
+def validate_question(x: QuestionIn):
+ if len(x.options) != 4: raise HTTPException(400, 'Должно быть ровно 4 варианта ответа')
+ if any(not isinstance(o, str) or not o.strip() or len(o) > 300 for o in x.options): raise HTTPException(400, 'Каждый вариант должен содержать 1–300 символов')
+ if x.correct not in range(4): raise HTTPException(400, 'Правильный ответ должен быть от 0 до 3')
+ if not x.body.strip(): raise HTTPException(400, 'Введите текст вопроса')
 @app.on_event('startup')
 def startup():
  c=db(); n=c.execute('SELECT COUNT(*) FROM questions').fetchone()[0]
@@ -442,12 +448,40 @@ def exam_request(req:Request):
  cur=c.execute("INSERT INTO exam_requests(user_id,status,created) VALUES(?,'pending',?)",(u['id'],int(time.time())));now=int(time.time());audit(c,u,'Заявка на аттестацию подана',f'Заявка №{cur.lastrowid}');
  for manager in c.execute("SELECT id FROM users WHERE role IN ('Владелец','Начальник ОСВ','Заместитель начальника ОСВ') AND role_approved=1").fetchall():c.execute('INSERT INTO notifications(user_id,title,body,created) VALUES(?,?,?,?)',(manager['id'],'Новая заявка на аттестацию',f'{u["nickname"]} подал заявку №{cur.lastrowid}',now))
  c.commit();c.close();return {'ok':True,'status':'pending'}
+@app.post('/api/exam/start')
+def start_exam(req: Request):
+ u = require(req)
+ if not u['role_approved']: raise HTTPException(403, 'Ваша должность ещё не подтверждена')
+ c = db()
+ try:
+  if u['role'] != 'Владелец':
+   approval = c.execute("SELECT status FROM exam_requests WHERE user_id=? ORDER BY id DESC LIMIT 1", (u['id'],)).fetchone()
+   if not approval or approval['status'] != 'approved': raise HTTPException(403, 'Сначала получите одобрение заявки на аттестацию')
+  active = c.execute("SELECT id FROM attempts WHERE user_id=? AND status='started' ORDER BY id DESC LIMIT 1", (u['id'],)).fetchone()
+  if active: return {'ok': True, 'attempt_id': active['id'], 'status': 'started', 'resumed': True}
+  qs = c.execute("SELECT id,body,options FROM questions WHERE active=1 AND options!='[]' ORDER BY RANDOM() LIMIT ?", (QUESTION_COUNT,)).fetchall()
+  if len(qs) < QUESTION_COUNT: raise HTTPException(400, f'Недостаточно активных вопросов: нужно {QUESTION_COUNT}, доступно {len(qs)}')
+  now = int(time.time())
+  cur = c.execute("INSERT INTO attempts(user_id,score,total,passed,answers,created,started,status) VALUES(?,0,33,0,'{}',?,?,'started')", (u['id'], now, now))
+  aid = cur.lastrowid
+  for q in qs:
+   options = json.loads(q['options'] or '[]')
+   if len(options) != 4: raise HTTPException(400, f'Вопрос №{q["id"]} должен иметь 4 варианта ответа')
+   c.execute("INSERT INTO attempt_questions(attempt_id,question_id,body_snapshot,answer) VALUES(?,?,?,'')", (aid,q['id'],q['body']))
+  audit(c,u,'Аттестация начата',f'Попытка №{aid}')
+  c.commit()
+  return {'ok':True,'attempt_id':aid,'status':'started','resumed':False}
+ except Exception:
+  c.rollback()
+  raise
+ finally: c.close()
+
 @app.get('/api/questions')
 def questions(req:Request):
  u=require(req);c=db();a=c.execute("SELECT id FROM attempts WHERE user_id=? AND status='started' ORDER BY id DESC LIMIT 1",(u['id'],)).fetchone()
  if not a:c.close();raise HTTPException(403,'Сначала начните аттестацию')
- rows=c.execute('SELECT question_id,body_snapshot,answer FROM attempt_questions WHERE attempt_id=? ORDER BY rowid',(a['id'],)).fetchall();c.close()
- return [{'id':r['question_id'],'body':r['body_snapshot'],'answer':r['answer']} for r in rows]
+ rows=c.execute('SELECT aq.question_id,aq.body_snapshot,aq.answer,q.options,q.points FROM attempt_questions aq JOIN questions q ON q.id=aq.question_id WHERE aq.attempt_id=? ORDER BY aq.rowid',(a['id'],)).fetchall();c.close()
+ return [{'id':r['question_id'],'body':r['body_snapshot'],'answer':r['answer'],'options':json.loads(r['options'] or '[]'),'points':r['points']} for r in rows]
 @app.post('/api/submit')
 def submit(x:Answers,req:Request):
  u=require(req);c=db();a=c.execute("SELECT * FROM attempts WHERE user_id=? AND status='started' ORDER BY id DESC LIMIT 1",(u['id'],)).fetchone()
