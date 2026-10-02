@@ -374,7 +374,7 @@ def current(req):
 def require(req,staff=False,owner=False):
  u=current(req)
  if not u: raise HTTPException(401,'Войдите в аккаунт')
- if staff and u['role'] not in ('Владелец','Инструктор','Начальник ОСВ','Заместитель начальника ОСВ'):raise HTTPException(403,'Недостаточно прав')
+ if staff and (u['role'] not in ('Владелец','Инструктор','Начальник ОСВ','Заместитель начальника ОСВ') or (u['role']!='Владелец' and not u['role_approved'])):raise HTTPException(403,'Недостаточно прав или должность не подтверждена')
  if owner and u['role'] not in ('Владелец','Начальник ОСВ'):raise HTTPException(403,'Недостаточно прав: требуется владелец или начальник ОСВ')
  return u
 class Register(BaseModel): nickname:str=Field(min_length=3,max_length=32); position:str=Field(min_length=2,max_length=60); password:str=Field(min_length=6,max_length=100)
@@ -407,7 +407,7 @@ def register(x:Register,response:Response):
  if role not in ROLES:raise HTTPException(400,'Выберите должность из списка')
  c=db()
  try:
-  cur=c.execute("INSERT INTO users(nickname,position,password,role,created,role_approved,role_requested) VALUES(?,?,?,?,?,0,?)",(nick,role,pw_hash(x.password),'Стажёр',int(time.time()),role)); uid=cur.lastrowid
+  cur=c.execute("INSERT INTO users(nickname,position,password,role,created,role_approved,role_requested) VALUES(?,?,?,?,?,0,?)",(nick,'Стажёр',pw_hash(x.password),'Стажёр',int(time.time()),role)); uid=cur.lastrowid
   u=c.execute('SELECT * FROM users WHERE id=?',(uid,)).fetchone();audit(c,u,'Регистрация',f'Запрошена должность: {role}');now=int(time.time());
   for manager in c.execute("SELECT id FROM users WHERE role IN ('Владелец','Начальник ОСВ','Заместитель начальника ОСВ') AND role_approved=1").fetchall():c.execute('INSERT INTO notifications(user_id,title,body,created) VALUES(?,?,?,?)',(manager['id'],'Новая регистрация',f'{nick} подал заявку на вступление',now))
   c.commit()
@@ -484,6 +484,10 @@ def finish_review(aid:int,req:Request):
  rows=c.execute('SELECT mark FROM attempt_questions WHERE attempt_id=?',(aid,)).fetchall()
  if len(rows)!=33 or any(r['mark'] is None for r in rows):c.close();raise HTTPException(400,'Проверьте все 33 ответа')
  score=sum(r['mark'] for r in rows);now=int(time.time());passed=score>=28;c.execute("UPDATE attempts SET score=?,total=33,passed=?,status='finished',finished=? WHERE id=?",(score,int(passed),now,aid));u=c.execute('SELECT * FROM users WHERE id=?',(a['user_id'],)).fetchone();audit(c,actor,'Аттестация проверена',f'{u["nickname"]} · {score} ✓ / {33-score} ✕');c.execute('INSERT INTO notifications(user_id,title,body,created) VALUES(?,?,?,?)',(u['id'],'Аттестация проверена',f'Результат: {score} ✓ и {33-score} ✕ · {"Пройдена" if passed else "Не пройдена"}',now));c.commit();c.close();return {'ok':True,'score':score,'wrong':33-score,'passed':passed}
+@app.get('/api/admin/questions')
+def list_admin_questions(req:Request):
+ require(req,staff=True); c=db(); rows=c.execute('SELECT id,body,options,correct,points,active FROM questions ORDER BY id DESC LIMIT 5000').fetchall(); c.close(); return [{'id':r['id'],'body':r['body'],'options':json.loads(r['options'] or '[]'),'correct':r['correct'],'points':r['points'],'active':bool(r['active'])} for r in rows]
+
 @app.post('/api/admin/questions')
 def add_question(x:QuestionIn,req:Request):
  require(req,staff=True);validate_question(x);c=db()
@@ -529,7 +533,7 @@ def decide_role(uid:int,decision:str,req:Request):
  if decision not in ('approve','reject'):raise HTTPException(400,'Некорректное решение')
  c=db();u=c.execute('SELECT * FROM users WHERE id=? AND nickname<>?',(uid,OWNER)).fetchone()
  if not u:c.close();raise HTTPException(404,'Пользователь не найден')
- if decision=='approve':c.execute('UPDATE users SET role=COALESCE(role_requested,position),role_approved=1 WHERE id=?',(uid,));event='Должность одобрена'
+ if decision=='approve':c.execute('UPDATE users SET role=COALESCE(role_requested,position),position=COALESCE(role_requested,position),role_approved=1 WHERE id=?',(uid,));event='Должность одобрена'
  else:c.execute("UPDATE users SET role_approved=0,role='Стажёр' WHERE id=?",(uid,));event='Должность отклонена'
  audit(c,actor,event,f"{u['nickname']} · {u['role_requested']}");c.commit();c.close();return {'ok':True}
 @app.get('/api/admin/exam-requests')
