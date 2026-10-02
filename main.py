@@ -69,6 +69,7 @@ class Answers(BaseModel):
     answers:dict[str,int]
 class RoleIn(BaseModel):
     role:str
+
 @app.on_event("startup")
 def startup():
     c=db()
@@ -76,94 +77,137 @@ def startup():
     if not owner:
         c.execute("INSERT INTO users(nickname,position,password,role,created) VALUES(?,?,?,?,?)",
           (OWNER,"Инструктор ОСВ",pw_hash(os.getenv("OWNER_PASSWORD","ChangeMe_123!")),"Владелец",int(time.time())))
-    c.commit(); c.close()
+    
+    # ПРОВЕРКА И АВТОЗАЛИВКА ВСЕХ 33 ВОПРОСОВ
+    count_qs = c.execute("SELECT COUNT(*) n FROM questions WHERE active=1").fetchone()["n"]
+    if count_qs != 33:
+        c.execute("DELETE FROM questions") # Стираем старые некорректные записи
+        all_questions = [
+            {"body": "Какова основная задача ОСВ?", "options": ["Организация мероприятий", "Контроль соблюдения сотрудниками законности и дисциплины", "Выдача удостоверений", "Организация дорожного движения"], "correct": 1},
+            {"body": "Что должен сделать сотрудник ОСВ при получении информации о нарушении сотрудником?", "options": ["Проверить информацию", "Сразу наказать", "Опубликовать информацию", "Игнорировать"], "correct": 0},
+            {"body": "Основной принцип служебной проверки?", "options": ["Объективность", "Предвзятость", "Сокрытие информации", "Заранее назначенное наказание"], "correct": 0},
+            {"body": "Как сотрудник ОСВ должен общаться с проверяемым сотрудником?", "options": ["С угрозами", "Корректно и в рамках полномочий", "Провоцировать конфликт", "Игнорировать"], "correct": 1},
+            {"body": "Что означает термин терминологии правил сервера 'TK' (Team Kill)?", "options": ["Убийство игрока из своей фракции", "Убийство с целью мести", "Убийство без весомой игровой причины", "Использование багов игры для убийства"], "correct": 0},
+            {"body": "Разрешено ли сотруднику ОСВ использовать личный транспорт при исполнении служебных обязанностей?", "options": ["Разрешено всегда", "Разрешено только с разрешения руководства", "Запрещено в любом случае", "Разрешено только в ночное время"], "correct": 1},
+            {"body": "В каком случае сотрудник имеет право применить огнестрельное оружие без предупреждения?", "options": ["При попытке угона авто", "При оскорблении полиции", "Для защиты граждан или себя от угрозы, опасной для жизни", "При игнорировании остановки"], "correct": 2},
+            {"body": "Что является главным основанием для внесения сотрудника в Чёрный список?", "options": ["Грубое нарушение устава или правил сервера", "Собственное желание", "Неактивная игра 2 дня", "Личная неприязнь руководства"], "correct": 0},
+            {"body": "Что обязан сделать сотрудник ОСВ перед проведение обыска подозреваемого лица?", "options": ["Сразу надеть наручники", "Представиться, назвать причину и зафиксировать процесс на видео", "Спросить разрешение в общий чат", "Выписать штраф"], "correct": 1},
+            {"body": "Какое наказание следует за нарушение правил сервера, а именно 'DM' (Deathmatch)?", "options": ["Выговор во фракции", "ДеМорган / заключение в КПЗ или варн", "Блокировка чата", "Штраф"], "correct": 1},
+            {"body": "Что означает термин 'MG' (Metagaming) на серверах Amazing RP?", "options": ["Перенос информации из реального мира (OOC) в игровой мир (IC)", "Убийство при помощи авто", "Игры на деньги", "Увольнение игрока без причины"], "correct": 0},
+            {"body": "Имеет ли право сотрудник ОСВ игнорировать приказы руководства ФСБ?", "options": ["Да, ОСВ подчиняется только своему начальнику", "Нет, ФСБ контролирует силовые структуры", "Да, если приказы нелогичны", "Только если сотрудник Полковник"], "correct": 1},
+            {"body": "Каковы действия сотрудника ОСВ, если проверяемый игрок начинает уходить от RP?", "options": ["Нарушить правила в ответ", "Зафиксировать нарушение на видео и написать жалобу", "Сразу выйти из игры", "Убить игрока"], "correct": 1},
+            {"body": "Что из перечисленного является грубым нарушением субординации?", "options": ["Обращение на 'Вы'", "Оскорбление, хамство или мат в адрес коллег", "Опоздание на 2 минуты", "Доклады в рацию по форме"], "correct": 1},
+            {"body": "Какой орган осуществляет высший надзор за законностью действий полиции?", "options": ["Правительство и ФСБ области", "Городская больница", "Телерадиокомпания", "Частные охранные предприятия"], "correct": 0},
+            {"body": "Допускается ли сон (AFK) на посту или во время построения взвода?", "options": ["Допускается", "Категорически запрещено уставом", "Разрешено только стажёрам", "Разрешено в углу здания"], "correct": 1},
+            {"body": "Что обязан сделать сотрудник ОСВ, если во время патруля отключился фрапс?", "options": ["Продолжать патруль", "Прекратить обязанности, найти безопасное место и восстановить запись", "Попросить напарника писать всё текстом", "Написать администрации"], "correct": 1},
+            {"body": "Какое действие является обязательным при объявлении подозреваемого в розыск (/su)?", "options": ["Отыгровка КПК/рации в чат и указание верной статьи", "Просто прописать команду", "Спросить паспорт", "Указать причину 'Нарушитель'"], "correct": 0},
+            {"body": "При каком условии сотрудник ОСВ имеет право проверить документы у гражданина?", "options": ["Если стало интересно", "При обоснованных подозрениях в правонарушении или на блокпостах", "Если гражданин бежит", "Проверка на улице запрещена"], "correct": 1},
+            {"body": "Что означает понятие 'Блат' в государственных фракциях?", "options": ["Повышение/поблажки за счёт связей, дружбы или денег", "Стиль вождения авто", "Прохождение теста без ошибок", "Увольнение по СЖ"], "correct": 0},
+            {"body": "Разрешено ли использовать NonRP (OOC) информацию для выдачи выговора в игре (IC)?", "options": ["Да, если нарушение из Discord/VK", "Нет, наказания выдаются строго на основании IC проверок", "Разрешено для младшего состава", "На усмотрение инструктора"], "correct": 1},
+            {"body": "В каком чате разрешено обсуждать реальную жизнь и правила сервера?", "options": ["В обычном текстовом чате", "В рацию организации", "В NonRP чате (/b) или ООС-голосовом", "В департаменте (/d)"], "correct": 2},
+            {"body": "Что является нарушением правил 'Powergaming' (PG)?", "options": ["Превышение полномочий", "Преувеличение возможностей персонажа (один против четверых)", "Быстрая перезарядка", "Отказ от штрафа"], "correct": 1},
+            {"body": "Какой документ регламентирует правила дорожного движения на сервере?", "options": ["Уголовный Кодекс", "Кодекс об административных правонарушениях (КоАП)", "Конституция", "Внутренний устав ОСВ"], "correct": 1},
+            {"body": "Как должен поступить сотрудник ОСВ при обнаружении у проверяемого наркотиков?", "options": ["Взять взятку", "Изъять предметы, составить рапорт проверки для увольнения/ареста", "Выбросить предметы", "Объявить в розыск без протокола"], "correct": 1},
+{"body": "Что делать, если старший по званию приказывает нарушить правила сервера?", "options": ["Выполнить приказ", "Отказаться, зафиксировать факт приказа и передать в ФСБ/прокуратуру", "Выполнить и удалить улики", "Уволиться сразу"], "correct": 1},
+{"body": "Какое максимальное количество баллов можно набрать в данной аттестации ОСВ?", "options": ["28 баллов", "30 баллов", "33 балла", "100 баллов"], "correct": 2},
+{"body": "Что из перечисленного признается 'Сливом фракции'?", "options": ["Массовые увольнения/выговоры без причин, очистка тем форума", "Проведение тренировок", "Проверка отчетов ночью", "Совместные рейды"], "correct": 0},
+{"body": "Что делать, если проверяемая организация саботирует проверку ОСВ?", "options": ["Открыть огонь", "Сорвать проверку, зафиксировать саботаж и передать Правительству/ФСБ", "Угрожать баном", "Уехать и забыть"], "correct": 1},
+{"body": "Какое поведение сотрудника ОСВ считается недопустимым?", "options": ["Вежливое обращение", "Неадекватные анимации, танцы на авто, флуд в рацию", "Запись скриншотов отчетности", "Проверка знаний устава"], "correct": 1},
+{"body": "В течение какого времени сотрудник ОСВ обязан хранить видеозапись проверки?", "options": ["1 час", "3-5 дней на случай жалобы на форум", "Можно удалять сразу", "Один календарный год"], "correct": 1},
+{"body": "Каковы правила использования спецсигналов (мигалок и сирены)?", "options": ["Можно включать просто так", "Строго при погоне, выезде на вызов или спецзадании", "Запрещено правилами", "Только для начальника взвода"], "correct": 1},
+{"body": "Что является финальным этапом успешного прохождения проверки знаний?", "options": ["Бан аккаунта в игре", "Сохранение результата и отправка подтверждения в VK инструктору", "Выдача лидерки", "Переход на сайт Amazing"], "correct": 1}
+]
+for q in all_questions:
+c.execute("INSERT INTO questions(body,options,correct,points,active) VALUES(?,?,?,?,?)",
+(q["body"], json.dumps(q["options"], ensure_ascii=False), q["correct"], 1, 1))
+c.commit(); c.close()
 @app.get("/")
 def index(): return FileResponse(ROOT/"static/index.html")
 @app.get("/api/health")
 def health(): return {"status":"online","service":"OSV Attestation"}
 @app.post("/api/register")
 def register(x:Register,response:Response):
-    c=db()
-    try:
-        cur=c.execute("INSERT INTO users(nickname,position,password,role,created) VALUES(?,?,?,?,?)",
-          (x.nickname.strip(),x.position.strip(),pw_hash(x.password),"Кандидат",int(time.time())))
-        c.commit(); uid=cur.lastrowid
-    except sqlite3.IntegrityError:
-        c.close(); raise HTTPException(409,"Такой игровой ник уже зарегистрирован")
-    c.close(); response.set_cookie("osv_session",token(uid),httponly=True,samesite="lax",secure=os.getenv("COOKIE_SECURE","0")=="1",max_age=1209600)
-    return {"ok":True}
+c=db()
+try:
+cur=c.execute("INSERT INTO users(nickname,position,password,role,created) VALUES(?,?,?,?,?)",
+(x.nickname.strip(),x.position.strip(),pw_hash(x.password),"Кандидат",int(time.time())))
+c.commit(); uid=cur.lastrowid
+except sqlite3.IntegrityError:
+c.close(); raise HTTPException(409,"Такой игровой ник уже зарегистрирован")
+c.close(); response.set_cookie("osv_session",token(uid),httponly=True,samesite="lax",secure=os.getenv("COOKIE_SECURE","0")=="1",max_age=1209600)
+return {"ok":True}
 @app.post("/api/login")
 def login(x:Login,response:Response):
-    c=db(); u=c.execute("SELECT * FROM users WHERE nickname=?",(x.nickname.strip(),)).fetchone(); c.close()
-    if not u or not check_pw(x.password,u["password"]): raise HTTPException(401,"Неверный ник или пароль")
-    response.set_cookie("osv_session",token(u["id"]),httponly=True,samesite="lax",secure=os.getenv("COOKIE_SECURE","0")=="1",max_age=1209600)
-    return {"ok":True}
+c=db(); u=c.execute("SELECT * FROM users WHERE nickname=?",(x.nickname.strip(),)).fetchone(); c.close()
+if not u or not check_pw(x.password,u["password"]): raise HTTPException(401,"Неверный ник или пароль")
+response.set_cookie("osv_session",token(u["id"]),httponly=True,samesite="lax",secure=os.getenv("COOKIE_SECURE","0")=="1",max_age=1209600)
+return {"ok":True}
 @app.post("/api/logout")
 def logout(response:Response):
-    response.delete_cookie("osv_session"); return {"ok":True}
+response.delete_cookie("osv_session"); return {"ok":True}
 @app.get("/api/me")
 def me(req:Request):
-    u=current(req)
-    if not u:return {"user":None}
-    return {"user":{"id":u["id"],"nickname":u["nickname"],"position":u["position"],"role":u["role"]}}
+u=current(req)
+if not u:return {"user":None}
+return {"user":{"id":u["id"],"nickname":u["nickname"],"position":u["position"],"role":u["role"]}}
 @app.get("/api/roster")
 def roster():
-    c=db(); rows=c.execute("SELECT id,nickname,position,role,created FROM users ORDER BY CASE role WHEN 'Владелец' THEN 0 WHEN 'Начальник ОСВ' THEN 1 WHEN 'Заместитель начальника ОСВ' THEN 2 WHEN 'Старший инспектор' THEN 3 WHEN 'Инспектор' THEN 4 WHEN 'Инструктор' THEN 5 WHEN 'Стажёр' THEN 6 ELSE 7 END,nickname COLLATE NOCASE").fetchall(); c.close()
-    return [dict(r) for r in rows]
+c=db(); rows=c.execute("SELECT id,nickname,position,role,created FROM users ORDER BY CASE role WHEN 'Владелец' THEN 0 WHEN 'Начальник ОСВ' THEN 1 WHEN 'Заместитель начальника ОСВ' THEN 2 WHEN 'Старший инспектор' THEN 3 WHEN 'Инспектор' THEN 4 WHEN 'Инструктор' THEN 5 WHEN 'Стажёр' THEN 6 ELSE 7 END,nickname COLLATE NOCASE").fetchall(); c.close()
+return [dict(r) for r in rows]
 @app.get("/api/questions")
 def questions(req:Request):
-    u=current(req); c=db()
-    rows=c.execute("SELECT id,body,options,points FROM questions WHERE active=1 ORDER BY id").fetchall()
-    c.close()
-    return [{"id":r["id"],"body":r["body"],"options":json.loads(r["options"]),"points":r["points"]} for r in rows]
+u=current(req); c=db()
+rows=c.execute("SELECT id,body,options,points FROM questions WHERE active=1 ORDER BY id").fetchall()
+c.close()
+return [{"id":r["id"],"body":r["body"],"options":json.loads(r["options"]),"points":r["points"]} for r in rows]
 @app.get("/api/admin/questions")
 def admin_questions(req:Request):
-    require(req,True); c=db(); rows=c.execute("SELECT * FROM questions ORDER BY id").fetchall(); c.close()
-    return [{"id":r["id"],"body":r["body"],"options":json.loads(r["options"]),"correct":r["correct"],"points":r["points"],"active":bool(r["active"])} for r in rows]
+require(req,True); c=db(); rows=c.execute("SELECT * FROM questions ORDER BY id").fetchall(); c.close()
+return [{"id":r["id"],"body":r["body"],"options":json.loads(r["options"]),"correct":r["correct"],"points":r["points"],"active":bool(r["active"])} for r in rows]
 @app.post("/api/admin/questions")
 def add_question(x:QuestionIn,req:Request):
-    require(req,True)
-    if len(x.options)<2 or len(x.options)>6 or any(not a.strip() for a in x.options) or x.correct<0 or x.correct>=len(x.options): raise HTTPException(400,"Добавьте 2–6 вариантов и укажите правильный")
-    c=db(); count=c.execute("SELECT COUNT(*) n FROM questions").fetchone()["n"]
-    if count>=33:c.close();raise HTTPException(400,"В аттестации может быть не более 33 вопросов")
-    cur=c.execute("INSERT INTO questions(body,options,correct,points,active) VALUES(?,?,?,?,?)",(x.body.strip(),json.dumps(x.options,ensure_ascii=False),x.correct,x.points,int(x.active)));c.commit();qid=cur.lastrowid;c.close();return {"id":qid}
+require(req,True)
+if len(x.options)<2 or len(x.options)>6 or any(not a.strip() for a in x.options) or x.correct<0 or x.correct>=len(x.options): raise HTTPException(400,"Добавьте 2–6 вариантов и укажите правильный")
+c=db(); count=c.execute("SELECT COUNT() n FROM questions").fetchone()["n"]
+if count>=33:c.close();raise HTTPException(400,"В аттестации может быть не более 33 вопросов")
+cur=c.execute("INSERT INTO questions(body,options,correct,points,active) VALUES(?,?,?,?,?)",(x.body.strip(),json.dumps(x.options,ensure_ascii=False),x.correct,x.points,int(x.active)));c.commit();qid=cur.lastrowid;c.close();return {"id":qid}
 @app.put("/api/admin/questions/{qid}")
 def edit_question(qid:int,x:QuestionIn,req:Request):
-    require(req,True)
-    if len(x.options)<2 or len(x.options)>6 or x.correct<0 or x.correct>=len(x.options):raise HTTPException(400,"Проверьте варианты ответа")
-    c=db(); cur=c.execute("UPDATE questions SET body=?,options=?,correct=?,points=?,active=? WHERE id=?",(x.body.strip(),json.dumps(x.options,ensure_ascii=False),x.correct,x.points,int(x.active),qid));c.commit();c.close()
-    if not cur.rowcount:raise HTTPException(404,"Вопрос не найден")
-    return {"ok":True}
+require(req,True)
+if len(x.options)<2 or len(x.options)>6 or x.correct<0 or x.correct>=len(x.options):raise HTTPException(400,"Проверьте варианты ответа")
+c=db(); cur=c.execute("UPDATE questions SET body=?,options=?,correct=?,points=?,active=? WHERE id=?",(x.body.strip(),json.dumps(x.options,ensure_ascii=False),x.correct,x.points,int(x.active),qid));c.commit();c.close()
+if not cur.rowcount:raise HTTPException(404,"Вопрос не найден")
+return {"ok":True}
 @app.delete("/api/admin/questions/{qid}")
 def delete_question(qid:int,req:Request):
-    require(req,True);c=db();c.execute("DELETE FROM questions WHERE id=?",(qid,));c.commit();c.close();return {"ok":True}
+require(req,True);c=db();c.execute("DELETE FROM questions WHERE id=?",(qid,));c.commit();c.close();return {"ok":True}
 @app.get("/api/admin/users")
 def admin_users(req:Request):
-    require(req,True);c=db();rows=c.execute("SELECT id,nickname,position,role,created FROM users ORDER BY nickname").fetchall();c.close();return [dict(r) for r in rows]
+require(req,True);c=db();rows=c.execute("SELECT id,nickname,position,role,created FROM users ORDER BY nickname").fetchall();c.close();return [dict(r) for r in rows]
 @app.patch("/api/admin/users/{uid}/role")
 def set_role(uid:int,x:RoleIn,req:Request):
-    actor=require(req,True)
-    allowed=["Кандидат","Начальник ОСВ","Заместитель начальника ОСВ","Стажёр","Инструктор","Инспектор","Старший инспектор"]
-    if x.role not in allowed:raise HTTPException(400,"Недопустимая должность")
-    if actor["role"]!="Владелец":raise HTTPException(403,"Назначать должности может только владелец")
-    c=db();c.execute("UPDATE users SET role=? WHERE id=? AND nickname<>?",(x.role,uid,OWNER));c.commit();c.close();return {"ok":True}
+actor=require(req,True)
+allowed=["Кандидат","Начальник ОСВ","Заместитель начальника ОСВ","Стажёр","Инструктор","Инспектор","Старший инспектор"]
+if x.role not in allowed:raise HTTPException(400,"Недопустимая должность")
+if actor["role"]!="Владелец":raise HTTPException(403,"Назначать должности может только владелец")
+c=db();c.execute("UPDATE users SET role=? WHERE id=? AND nickname<>?",(x.role,uid,OWNER));c.commit();c.close();return {"ok":True}
 @app.post("/api/submit")
 def submit(x:Answers,req:Request):
-    u=require(req);c=db();qs=c.execute("SELECT id,correct,points FROM questions WHERE active=1 ORDER BY id").fetchall()
-    if len(qs)!=33:c.close();raise HTTPException(400,f"Аттестация пока не готова: активных вопросов {len(qs)} из 33")
-    if len(x.answers)!=33:c.close();raise HTTPException(400,"Ответьте на все 33 вопроса")
-    score=0; detail={}
-    for q in qs:
-        val=x.answers.get(str(q["id"]))
-        if val is None or val<0:c.close();raise HTTPException(400,"Ответьте на все вопросы")
-        ok=val==q["correct"]
-        if ok:score+=q["points"]
-        detail[str(q["id"])]={"selected":val,"correct":q["correct"],"ok":ok}
-    total=sum(q["points"] for q in qs); passed=score>=28 and total>=28
-    c.execute("INSERT INTO attempts(user_id,score,total,passed,answers,created) VALUES(?,?,?,?,?,?)",(u["id"],score,total,int(passed),json.dumps(detail),int(time.time())))
-    c.commit();c.close()
-    return {"score":score,"total":total,"passed":passed,"contact":"karl_limansky2025"}
+u=require(req);c=db();qs=c.execute("SELECT id,correct,points FROM questions WHERE active=1 ORDER BY id").fetchall()
+if len(qs)!=33:c.close();raise HTTPException(400,f"Аттестация пока не готова: активных вопросов {len(qs)} из 33")
+if len(x.answers)!=33:c.close();raise HTTPException(400,"Ответьте на все 33 вопроса")
+score=0; detail={}
+for q in qs:
+val=x.answers.get(str(q["id"]))
+if val is None or val<0:c.close();raise HTTPException(400,"Ответьте на все вопросы")
+ok=val==q["correct"]
+if ok:score+=q["points"]
+detail[str(q["id"])]={"selected":val,"correct":q["correct"],"ok":ok}
+total=sum(q["points"] for q in qs); passed=score>=28 and total>=28
+c.execute("INSERT INTO attempts(user_id,score,total,passed,answers,created) VALUES(?,?,?,?,?,?)",(u["id"],score,total,int(passed),json.dumps(detail),int(time.time())))
+c.commit();c.close()
+return {"score":score,"total":total,"passed":passed,"contact":"karl_limansky2025"}
 @app.get("/api/admin/results")
 def results(req:Request):
-    require(req,True);c=db();rows=c.execute("SELECT a.*,u.nickname,u.position FROM attempts a JOIN users u ON u.id=a.user_id ORDER BY a.created DESC LIMIT 200").fetchall();c.close()
-    return [{"nickname":r["nickname"],"position":r["position"],"score":r["score"],"total":r["total"],"passed":bool(r["passed"]),"created":r["created"]} for r in rows]
+require(req,True);c=db();rows=c.execute("SELECT a.,u.nickname,u.position FROM attempts a JOIN users u ON u.id=a.user_id ORDER BY a.created DESC LIMIT 200").fetchall();c.close()
+return [{"nickname":r["nickname"],"position":r["position"],"score":r["score"],"total":r["total"],"passed":bool(r["passed"]),"created":r["created"]} for r in rows]
