@@ -76,6 +76,12 @@ def startup():
  c.commit();c.close()
 @app.get('/')
 def index():return FileResponse(ROOT/'static'/'index.html')
+@app.get('/Host.png')
+def host_banner():
+ p=ROOT/'Host.png'
+ if not p.exists(): p=ROOT/'banner.jpg'
+ if not p.exists(): raise HTTPException(404,'Добавьте Host.png или banner.jpg в корень проекта')
+ return FileResponse(p)
 @app.get('/banner.jpg')
 def banner():
  p=ROOT/'banner.jpg'
@@ -86,14 +92,15 @@ def health():return {'status':'online','service':'OSV Attestation'}
 def user_dict(u):return {'id':u['id'],'nickname':u['nickname'],'mask':u['mask'] if 'mask' in u.keys() else '', 'position':u['position'],'role':u['role'],'role_approved':bool(u['role_approved']),'role_requested':u['role_requested'],'last_login':u['last_login'],'rank':u['rank'] if 'rank' in u.keys() else 'Без звания'}
 @app.post('/api/register')
 def register(x:Register,response:Response):
- nick=x.nickname.strip(); mask=x.mask.strip(); role='Стажёр'
+ nick=x.nickname.strip(); mask=x.mask.strip(); role=x.position.strip()
+ if role not in ROLES or role=='Владелец':raise HTTPException(400,'Выберите допустимую запрашиваемую должность')
  if not mask.isdigit():raise HTTPException(400,'Игровая маска должна быть числовым ID')
  c=db()
  if c.execute('SELECT 1 FROM users WHERE mask=?',(mask,)).fetchone(): c.close(); raise HTTPException(409,'Этот игровой ID уже зарегистрирован')
  try:
-  cur=c.execute("INSERT INTO users(nickname,mask,position,password,role,created,role_approved,role_requested) VALUES(?,?,?,?,?,?,1,?)",(nick,mask,'Стажёр',pw_hash(x.password),'Стажёр',int(time.time()),role)); uid=cur.lastrowid
+  cur=c.execute("INSERT INTO users(nickname,mask,position,password,role,created,role_approved,role_requested) VALUES(?,?,?,?,?,?,0,?)",(nick,mask,role,pw_hash(x.password),'Стажёр',int(time.time()),role)); uid=cur.lastrowid
   u=c.execute('SELECT * FROM users WHERE id=?',(uid,)).fetchone();audit(c,u,'Регистрация',f'Запрошена должность: {role}');now=int(time.time());
-  for manager in c.execute("SELECT id FROM users WHERE role IN ('Инструктор','Владелец','Начальник ОСВ','Заместитель начальника ОСВ') AND role_approved=1").fetchall():c.execute('INSERT INTO notifications(user_id,title,body,created) VALUES(?,?,?,?)',(manager['id'],'Новая регистрация',f'{nick} подал заявку на вступление',now))
+  for manager in c.execute("SELECT id FROM users WHERE role IN ('Инструктор','Владелец','Начальник ОСВ','Заместитель начальника ОСВ') AND role_approved=1").fetchall():c.execute('INSERT INTO notifications(user_id,title,body,created) VALUES(?,?,?,?)',(manager['id'],'Заявка на должность',f'{nick} запросил должность: {role}',now))
   c.commit()
  except sqlite3.IntegrityError:c.close();raise HTTPException(409,'Такой игровой ник или игровой ID уже зарегистрирован')
  c.close();response.set_cookie('osv_session',token(uid),httponly=True,samesite='lax',secure=os.getenv('COOKIE_SECURE','0')=='1',max_age=1209600);return {'ok':True}
@@ -239,12 +246,12 @@ def role_requests(req:Request):
  require(req,owner=True);c=db();rows=c.execute("SELECT id,nickname,position,role_requested,created FROM users WHERE role_approved=0 AND nickname<>? ORDER BY created",(OWNER,)).fetchall();c.close();return [dict(r) for r in rows]
 @app.post('/api/admin/role-requests/{uid}/{decision}')
 def decide_role(uid:int,decision:str,req:Request):
- actor=require(req,staff=True)
+ actor=require(req,owner=True)
  if decision not in ('approve','reject'):raise HTTPException(400,'Некорректное решение')
  c=db();u=c.execute('SELECT * FROM users WHERE id=? AND nickname<>?',(uid,OWNER)).fetchone()
  if not u:c.close();raise HTTPException(404,'Пользователь не найден')
  if decision=='approve':c.execute('UPDATE users SET role=COALESCE(role_requested,position),position=COALESCE(role_requested,position),role_approved=1 WHERE id=?',(uid,));event='Должность одобрена'
- else:c.execute("UPDATE users SET role_approved=0,role='Стажёр' WHERE id=?",(uid,));event='Должность отклонена'
+ else:c.execute("UPDATE users SET role='Стажёр',position='Стажёр',role_requested='Стажёр',role_approved=1 WHERE id=?",(uid,));event='Должность отклонена; установлен статус стажёра'
  audit(c,actor,event,f"{u['nickname']} · {u['role_requested']}");c.commit();c.close();return {'ok':True}
 @app.get('/api/admin/exam-requests')
 def admin_exam_requests(req:Request):
