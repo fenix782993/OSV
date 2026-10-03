@@ -1,10 +1,11 @@
-import os, sqlite3, hashlib, hmac, secrets, json, time
+import os, sqlite3, hashlib, hmac, secrets, json, time, re, shutil
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-ROOT=Path(__file__).resolve().parent; DB=ROOT/"osv.db"
+ROOT=Path(__file__).resolve().parent; DB=Path(os.getenv("DB_PATH", str(ROOT/"osv.db"))).expanduser(); DB.parent.mkdir(parents=True, exist_ok=True)
+if DB != ROOT/"osv.db" and not DB.exists() and (ROOT/"osv.db").exists(): shutil.copy2(ROOT/"osv.db", DB)
 app=FastAPI(title="ОСВ — Аттестация",version="2.0.0")
 app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
 SECRET=os.getenv("APP_SECRET","change-this-secret-on-render").encode(); OWNER="Fenix_Dinero"; PASS_SCORE=28; QUESTION_COUNT=33
@@ -335,7 +336,11 @@ def chat_messages(req:Request,room:str='general',peer:int|None=None):
 @app.post('/api/chat/messages')
 def chat_send(payload:dict,req:Request):
  u=require(req); room=str(payload.get('room','general')); body=str(payload.get('body','')).strip(); peer=payload.get('peer')
- if not body or len(body)>2000: raise HTTPException(400,'Сообщение должно содержать 1–2000 символов')
+ is_image=bool(re.fullmatch(r'data:image/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+',body))
+ is_audio=bool(re.fullmatch(r'data:audio/(?:webm|ogg|mpeg|wav);base64,[A-Za-z0-9+/=]+',body))
+ if not body or (len(body)>2000 and not ((is_image or is_audio) and len(body)<=4000000)):
+  raise HTTPException(400,'Текст: до 2000 символов; медиа: до 3 МБ в закодированном виде')
+ if len(body)>2000 and not (is_image or is_audio): raise HTTPException(400,'Недопустимый формат вложения')
  if room in ('general','leadership'):
   if not can_chat_room(u,room): raise HTTPException(403,'Нет доступа к этому чату')
   recipient=None
