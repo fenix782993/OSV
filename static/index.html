@@ -1,149 +1,41 @@
 <!doctype html>
 <html lang="ru">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="theme-color" content="#070305">
-<meta name="description" content="ОСВ — единый портал аттестации Amazing RP">
-<title>ОСВ — Единый портал</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Oswald:wght@500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/style.css?v=20261006-red">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#080203"><title>ОСВ — COMMAND PORTAL</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Oswald:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css?v=20261006-command2">
 </head>
 <body>
-<div class="noise"></div><div class="red-orb orb-a"></div><div class="red-orb orb-b"></div><div class="red-orb orb-c"></div>
-
+<div class="ambient a1"></div><div class="ambient a2"></div><div class="grain"></div>
 <aside class="sidebar" id="sidebar">
-  <div class="side-brand">
-    <div class="side-logo"><span>ОСВ</span><i></i></div>
-    <div><b>ОСВ</b><small>AMAZING RP</small></div>
-  </div>
-  <div class="side-caption">НАВИГАЦИЯ</div>
-  <nav class="side-nav">
-    <a class="side-link active" href="#home" data-target="home"><span class="ico">⌂</span><span>Главная</span><em>01</em></a>
-    <a class="side-link" href="#exam" data-target="exam"><span class="ico">✦</span><span>Аттестация</span><em>02</em></a>
-    <a class="side-link" href="#learning" data-target="learning"><span class="ico">▤</span><span>Обучение</span><em>03</em></a>
-    <a class="side-link" href="#roster" data-target="roster"><span class="ico">♙</span><span>Состав</span><em>04</em></a>
-    <a class="side-link" href="#services" data-target="services"><span class="ico">◈</span><span>Сервисы</span><em>05</em></a>
-    <a class="side-link" href="#leadership" data-target="leadership"><span class="ico">◆</span><span>Руководство</span><em>06</em></a>
+  <div class="brand"><div class="brand-mark">ОСВ<span></span></div><div><b>COMMAND</b><small>AMAZING RP</small></div></div>
+  <div class="nav-title">НАВИГАЦИЯ</div>
+  <nav id="nav">
+    <button class="nav-item active" data-page="home"><i>⌂</i><span>Главная</span><em>01</em></button>
+    <button class="nav-item" data-page="exam"><i>✦</i><span>Аттестация</span><em>02</em></button>
+    <button class="nav-item" data-page="learning"><i>▤</i><span>Обучение</span><em>03</em></button>
+    <button class="nav-item" data-page="roster"><i>♙</i><span>Состав</span><em>04</em></button>
+    <button class="nav-item" data-page="requests"><i>⌁</i><span>Заявки</span><em>05</em></button>
+    <button class="nav-item" data-page="services"><i>◈</i><span>Сервисы</span><em>06</em></button>
+    <button class="nav-item staff-only" data-page="reviews"><i>✓</i><span>Проверка</span><em>07</em></button>
+    <button class="nav-item staff-only" data-page="questions"><i>Q</i><span>Банк вопросов</span><em>08</em></button>
+    <button class="nav-item staff-only" data-page="audit"><i>≡</i><span>Журнал</span><em>09</em></button>
   </nav>
-  <div class="side-caption side-caption-gap">СИСТЕМА</div>
-  <div class="side-system">
-    <div><span class="status-dot"></span><b>Система онлайн</b><small>Все сервисы работают</small></div>
-    <span class="pulse-ring"></span>
-  </div>
-  <div class="side-bottom">
-    <div class="side-user-mini"><div class="mini-avatar">О</div><div><b>ОСВ PORTAL</b><small>Закрытая система</small></div></div>
-    <button class="side-login" id="authOpen"><span>◉</span> Войти</button>
+  <div class="sidebar-bottom">
+    <div class="online"><i></i><div><b>СИСТЕМА ОНЛАЙН</b><small>Данные синхронизированы</small></div></div>
+    <button class="account-btn" id="authOpen">◉ <span>Войти</span></button>
   </div>
 </aside>
-
-<div class="mobile-top"><button class="mobile-menu" id="mobileMenu">☰</button><div class="mobile-brand"><b>ОСВ</b><small>AMAZING RP</small></div><button class="mobile-auth" id="mobileAuth">◉</button></div>
-
-<main class="app-main" id="home">
-  <div class="topline"><span>ОСВ / ЕДИНЫЙ ПОРТАЛ</span><span class="topline-right"><i></i> SYSTEM ONLINE <b>24/7</b></span></div>
-
-  <section class="hero-command section-anchor" id="hero">
-    <div class="hero-grid">
-      <div class="hero-copy">
-        <div class="kicker"><span></span> ОТДЕЛ СЛУЖЕБНОЙ БЕЗОПАСНОСТИ</div>
-        <h1>ПРОФЕССИОНАЛЫ<br><strong>НАЧИНАЮТСЯ ЗДЕСЬ</strong></h1>
-        <p>Единая цифровая среда ОСВ для обучения, аттестации, заявок и управления составом. Всё важное — в одном месте.</p>
-        <div class="hero-buttons">
-          <a class="red-btn" href="#exam" data-target="exam"><span>✦</span> Начать аттестацию <b>↗</b></a>
-          <a class="ghost-btn" href="#learning" data-target="learning">Изучить материалы</a>
-        </div>
-        <div class="hero-metrics">
-          <div><b>33</b><span>вопроса</span></div><div><b>28</b><span>минимум баллов</span></div><div><b>24/7</b><span>доступ</span></div>
-        </div>
-      </div>
-      <div class="hero-visual">
-        <div class="hero-card glow-card">
-          <div class="card-grid"></div><div class="scanline"></div>
-          <div class="hero-card-top"><span class="chip">ОСВ / 01</span><span class="live"><i></i> ONLINE</span></div>
-          <div class="crest-large"><span>ОСВ</span><small>AMAZING RP</small><i>✦</i></div>
-          <div class="hero-card-bottom"><div><small>СИСТЕМА</small><b>АТТЕСТАЦИЯ</b></div><strong>01</strong></div>
-        </div>
-        <div class="float-card fc-one"><span>✓</span><div><b>Защищённый доступ</b><small>Роли и права проверяются сервером</small></div></div>
-        <div class="float-card fc-two"><span>33</span><div><b>Банк вопросов</b><small>Случайная выборка на каждую попытку</small></div></div>
-      </div>
-    </div>
-  </section>
-
-  <section class="stats-strip">
-    <div><small>СТАТУС ПОРТАЛА</small><b><i></i> ОНЛАЙН</b></div>
-    <div><small>АТТЕСТАЦИЯ</small><b>33 <span>ВОПРОСА</span></b></div>
-    <div><small>ПРОХОДНОЙ БАЛЛ</small><b>28 <span>ИЗ 33</span></b></div>
-    <div><small>ДОСТУП</small><b>24/7 <span>СИСТЕМА</span></b></div>
-  </section>
-
-  <section class="section-block section-anchor" id="about">
-    <div class="section-heading"><div><span class="section-number">01 / ОСНОВА</span><h2>ВСЁ ДЛЯ <em>ОСВ</em></h2></div><p>Современный портал, где сотрудник проходит весь путь — от заявки и обучения до аттестации.</p></div>
-    <div class="feature-grid">
-      <article class="feature-card featured"><div class="feature-top"><span class="feature-icon">✦</span><small>01 / EXAM</small></div><h3>Аттестация</h3><p>33 случайных вопроса из общей базы. Ответы отправляются инструктору на проверку.</p><a href="#exam" data-target="exam">Открыть <b>↗</b></a></article>
-      <article class="feature-card"><div class="feature-top"><span class="feature-icon">▤</span><small>02 / LEARN</small></div><h3>Обучение</h3><p>Материалы, памятки и подготовка перед настоящей аттестацией.</p><a href="#learning" data-target="learning">Изучить <b>↗</b></a></article>
-      <article class="feature-card"><div class="feature-top"><span class="feature-icon">♙</span><small>03 / ROSTER</small></div><h3>Личный состав</h3><p>Актуальный состав, должности, статусы и руководство подразделения.</p><a href="#roster" data-target="roster">Смотреть <b>↗</b></a></article>
-    </div>
-  </section>
-
-  <section class="section-block section-anchor" id="learning">
-    <div class="section-heading"><div><span class="section-number">02 / ACADEMY</span><h2>УЧЕБНЫЙ <em>ЦЕНТР</em></h2></div><p>Подготовьтесь до того, как нажмёте «Начать аттестацию».</p></div>
-    <div class="learning-layout">
-      <div class="learning-main glow-panel"><div class="panel-label">РЕКОМЕНДУЕМЫЙ МАРШРУТ</div><h3>Подготовка к аттестации ОСВ</h3><p>Изучите основные принципы работы, обязанности сотрудника, дисциплину и порядок действий. Учебные материалы не влияют на итоговый результат экзамена.</p><div class="learning-progress"><div><span>Готовность</span><b>Подготовка → Аттестация</b></div><div class="progress-line"><i></i></div></div><a href="#exam" class="red-btn small" data-target="exam">Перейти к аттестации ↗</a></div>
-      <div class="learning-list">
-        <article><span>01</span><div><b>Основы ОСВ</b><small>Порядок и ответственность</small></div><em>→</em></article>
-        <article><span>02</span><div><b>Служебные обязанности</b><small>Что должен знать сотрудник</small></div><em>→</em></article>
-        <article><span>03</span><div><b>Практические ситуации</b><small>Разбор типовых действий</small></div><em>→</em></article>
-        <article><span>04</span><div><b>Подготовка к тесту</b><small>33 вопроса / 28 баллов</small></div><em>→</em></article>
-      </div>
-    </div>
-  </section>
-
-  <section class="section-block section-anchor" id="services">
-    <div class="section-heading"><div><span class="section-number">03 / ECOSYSTEM</span><h2>СЕРВИСЫ <em>FENIX</em></h2></div><p>Полезные сервисы проекта. Нажмите на карточку — Telegram откроется в новой вкладке.</p></div>
-    <div class="services-grid">
-      <a class="service-card service-red" href="https://t.me/fenixVPNrobot" target="_blank" rel="noopener noreferrer"><div class="service-icon">VPN</div><div class="service-copy"><small>TELEGRAM BOT</small><h3>Fenix VPN</h3><p>@fenixVPNrobot</p></div><span class="service-arrow">↗</span></a>
-      <a class="service-card" href="https://t.me/Fenix_stars_bot" target="_blank" rel="noopener noreferrer"><div class="service-icon stars">✦</div><div class="service-copy"><small>TELEGRAM BOT</small><h3>Fenix Stars</h3><p>@Fenix_stars_bot</p></div><span class="service-arrow">↗</span></a>
-      <a class="service-card" href="https://t.me/fenix_supportBot" target="_blank" rel="noopener noreferrer"><div class="service-icon support">?</div><div class="service-copy"><small>TELEGRAM</small><h3>Fenix Support</h3><p>Поддержка и связь</p></div><span class="service-arrow">↗</span></a>
-      <div class="service-card service-disabled"><div class="service-icon">OSV</div><div class="service-copy"><small>ВНУТРЕННИЙ СЕРВИС</small><h3>Служебный чат</h3><p>Доступ после авторизации</p></div><span class="service-arrow">⌁</span></div>
-    </div>
-  </section>
-
-  <section class="section-block section-anchor" id="roster">
-    <div class="section-heading"><div><span class="section-number">04 / PERSONNEL</span><h2>ЛИЧНЫЙ <em>СОСТАВ</em></h2></div><p>Официальный список подтверждённого состава, загружаемый с сервера.</p></div>
-    <div class="roster-frame glow-panel"><div class="roster-head"><div><span class="panel-label">LIVE REGISTRY</span><h3>Реестр сотрудников</h3><small>Данные обновляются автоматически</small></div><span class="live-pill"><i></i> ONLINE</span></div><div class="table-wrap"><table><thead><tr><th>№</th><th>ИГРОВОЙ НИК</th><th>ДОЛЖНОСТЬ</th><th>СТАТУС</th></tr></thead><tbody id="rosterRows"><tr><td colspan="4" class="muted">Загрузка состава…</td></tr></tbody></table></div></div>
-  </section>
-
-  <section class="section-block section-anchor" id="leadership">
-    <div class="section-heading"><div><span class="section-number">05 / COMMAND</span><h2>РУКОВОДСТВО <em>ОСВ</em></h2></div><p>Назначенные руководители отображаются автоматически.</p></div>
-    <div class="leadership-grid" id="leadershipCards"><article class="leader-card leader-empty"><span class="leader-mark">ОСВ</span><b>Руководящий состав</b><small>Загрузка данных…</small></article></div>
-  </section>
-
-  <section class="section-block exam-block section-anchor" id="exam">
-    <div class="section-heading"><div><span class="section-number">06 / CERTIFICATION</span><h2>АТТЕСТАЦИЯ <em>ОСВ</em></h2></div><p>33 письменных вопроса. Проходной результат — 28 баллов. Допуск контролируется сервером.</p></div>
-    <div class="exam-panel glow-panel" id="examPanel"><div class="exam-lock"><div class="lock-icon">✦</div><span class="section-number">SECURE ACCESS</span><h3>ГОТОВЫ ПРОВЕРИТЬ СЕБЯ?</h3><p>Авторизуйтесь, чтобы начать аттестацию. Ваш результат сохранится в системе.</p><button class="red-btn" id="examAuth">Войти / Регистрация</button></div></div>
-  </section>
-
-  <footer class="footer"><div class="footer-brand"><div class="side-logo small"><span>ОСВ</span><i></i></div><div><b>ОСВ / AMAZING RP</b><small>ЕДИНЫЙ ПОРТАЛ ПОДРАЗДЕЛЕНИЯ</small></div></div><span>Неофициальный игровой ресурс сообщества Amazing RP.</span><a href="https://t.me/fenixVPNrobot" target="_blank" rel="noopener noreferrer">Fenix VPN ↗</a></footer>
+<header class="mobile-head"><button id="mobileMenu">☰</button><b>ОСВ <small>COMMAND</small></b><button id="mobileAuth">◉</button></header>
+<main class="content">
+  <div class="topbar"><span>ОСВ / ЕДИНЫЙ ЦИФРОВОЙ ПОРТАЛ</span><span class="online-text"><i></i> SYSTEM ONLINE</span></div>
+  <div id="app"></div>
 </main>
-
-<div class="mobile-nav"><a href="#home" data-target="home">⌂<small>Главная</small></a><a href="#exam" data-target="exam">✦<small>Аттестация</small></a><a href="#learning" data-target="learning">▤<small>Обучение</small></a><a href="#services" data-target="services">◈<small>Сервисы</small></a></div>
-
-<div class="modal hidden" id="authModal"><div class="modal-card"><button class="close" id="authClose" aria-label="Закрыть">×</button><div class="modal-brand"><div class="side-logo small"><span>ОСВ</span><i></i></div><div><span class="section-number">SECURE LOGIN</span><h2 id="authTitle">ВХОД В СИСТЕМУ</h2></div></div><p class="modal-intro">Войдите в аккаунт или зарегистрируйтесь для доступа к аттестации.</p><div class="tabs"><button class="tab active" data-tab="login">Войти</button><button class="tab" data-tab="register">Регистрация</button></div><form id="authForm"><label>Игровой ник<input id="nickname" minlength="3" maxlength="32" placeholder="Например, Fenix_Dinero" required></label><label id="maskLabel" class="hidden">Игровая маска (ID)<input id="mask" inputmode="numeric" pattern="[0-9]{1,12}" maxlength="12" placeholder="Например, 123456"><small class="muted">Числовой ID персонажа.</small></label><label id="positionLabel" class="hidden">Роль в системе<input id="position" value="Стажёр" readonly><small class="muted">Другие должности назначает руководство.</small></label><label>Пароль<input id="password" type="password" minlength="6" placeholder="Минимум 6 символов" required></label><button class="red-btn full" type="submit" id="authSubmit">Войти</button><p class="form-msg" id="authMsg"></p></form></div></div>
-
-<script src="/static/app.js?v=20261006-red"></script>
-<script>
-(function(){
-  const links=[...document.querySelectorAll('[data-target]')];
-  const go=(id)=>{const el=document.getElementById(id);if(!el)return;el.scrollIntoView({behavior:'smooth',block:'start'});document.getElementById('sidebar')?.classList.remove('open');links.forEach(x=>x.classList.toggle('active',x.dataset.target===id));};
-  links.forEach(a=>a.addEventListener('click',e=>{const id=a.dataset.target;if(id){e.preventDefault();go(id)}}));
-  document.getElementById('mobileMenu')?.addEventListener('click',()=>document.getElementById('sidebar')?.classList.toggle('open'));
-  document.getElementById('mobileAuth')?.addEventListener('click',()=>document.getElementById('authOpen')?.click());
-  const sections=['home','learning','services','roster','leadership','exam'].map(id=>document.getElementById(id)).filter(Boolean);
-  const obs=new IntersectionObserver(es=>{const v=es.filter(x=>x.isIntersecting).sort((a,b)=>b.intersectionRatio-a.intersectionRatio)[0];if(v)links.forEach(x=>x.classList.toggle('active',x.dataset.target===v.target.id));},{rootMargin:'-25% 0px -60% 0px',threshold:[.05,.2,.5]});
-  sections.forEach(s=>obs.observe(s));
-})();
-</script>
-</body>
-</html>
+<div class="mobile-nav" id="mobileNav">
+ <button data-page="home">⌂<small>Главная</small></button><button data-page="exam">✦<small>Экзамен</small></button><button data-page="roster">♙<small>Состав</small></button><button data-page="services">◈<small>Сервисы</small></button><button data-page="profile">●<small>Профиль</small></button>
+</div>
+<div class="modal hidden" id="authModal"><div class="modal-card"><button class="close" id="authClose">×</button><div class="eyebrow">SECURE ACCESS</div><h2 id="authTitle">ВХОД В СИСТЕМУ</h2><p class="muted">Авторизация открывает персональный кабинет и доступные разделы.</p><div class="tabs"><button class="tab active" data-tab="login">Войти</button><button class="tab" data-tab="register">Регистрация</button></div><form id="authForm"><label>Игровой ник<input id="nickname" required minlength="3" maxlength="32" placeholder="Fenix_Dinero"></label><label id="positionLabel" class="hidden">Запрашиваемая должность<select id="position"><option>Стажёр</option><option>Инспектор</option><option>Старший инспектор</option><option>Инструктор</option><option>Заместитель начальника ОСВ</option><option>Начальник ОСВ</option></select></label><label>Пароль<input id="password" type="password" required minlength="6" placeholder="Минимум 6 символов"></label><button class="red-btn full" type="submit" id="authSubmit">ВОЙТИ</button><p id="authMsg" class="form-msg"></p></form></div></div>
+<script src="/static/app.js?v=20261006-command2"></script>
+</body></html>
