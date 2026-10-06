@@ -1,24 +1,353 @@
-import os, sqlite3, hashlib, hmac, secrets, json, time, re, shutil
+import os, sqlite3, hashlib, hmac, secrets, json, time
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-ROOT=Path(__file__).resolve().parent; DB=Path(os.getenv("DB_PATH", str(ROOT/"osv.db"))).expanduser(); DB.parent.mkdir(parents=True, exist_ok=True)
-if DB != ROOT/"osv.db" and not DB.exists() and (ROOT/"osv.db").exists(): shutil.copy2(ROOT/"osv.db", DB)
+ROOT=Path(__file__).resolve().parent; DB=ROOT/"osv.db"
 app=FastAPI(title="ОСВ — Аттестация",version="2.0.0")
 app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
 SECRET=os.getenv("APP_SECRET","change-this-secret-on-render").encode(); OWNER="Fenix_Dinero"; PASS_SCORE=28; QUESTION_COUNT=33
 ROLES=["Начальник ОСВ","Заместитель начальника ОСВ","Стажёр","Старший инспектор","Инспектор","Инструктор"]
 RANKS=["Без звания","Полковник","Генерал"]
-QUESTIONS = ['На каком основании снимать маску с задержанного?', 'В каком случае можно одеть мешок на голову задержанного и на каком основании.', 'Что такое диспозиция в УК?', 'С какого звания можно задержать своего сотрудника?', 'Виды мед.помощи.', 'Может ли инспектор ОСВ проводить ОПМ, ОРД и на каком основании?', 'Что запрещено делать во время переговоров?', 'Можно ли обезвредить пояс смертника на человеке?', 'Основание на задержание сотрудника МВД?', 'Какие есть виды оружия', 'В каких случаях можно открыть огонь в городе.', 'Что будете делать если сотрудник употребит мятную пудру.', 'С какого момента начинается уголовное преследование.', 'При каких обстоятельствах можно применить спец средства, какие требования должны быть соблюдены перед их применением', 'На каком основание вы можете задержать сотрудника.', 'С какого звания можно задерживать сотрудников МВД.', 'На каком основании вы можете изъять лицензии на оружие и на права.', 'На каком основании вы будете требовать покинуть граждан место проведения задержания или других различных мероприятий.', 'На каком основании человек имеет право на жизнь.(конституция)', 'Основание на задержание(находящее лицо в розыске)', 'на каком основание задержанный имеет право на адвоката? (конституция)', 'Ваши первые действия при переговорах?', 'чем отличается 67 ук от 20.5 коап ?', 'ваши действия если при проверке документов у гражданина не стоит дата рождения?', 'на каком основание вы будете замерять и снимать тонировку?', 'о чем гласит 12.5 ВУ?', 'что вы сделаете если увидети гражданина на парковке ГИБДД?', 'о чем гласит 4.3 ВУ?', 'как правильно должен представляться инспектор ОСВ?', 'как правильно обращаться к руководству УГИБДД?', 'основные задачи ОСВ', 'Иеархия Федеральных законов?', 'кто подчиняется ОСВ?']
-
+QUESTIONS=[
+  [
+    "Какова основная задача ОСВ?",
+    [
+      "Организация мероприятий",
+      "Контроль соблюдения сотрудниками законности и дисциплины",
+      "Выдача удостоверений",
+      "Организация дорожного движения"
+    ],
+    1
+  ],
+  [
+    "Что должен сделать сотрудник ОСВ при получении информации о нарушении сотрудником?",
+    [
+      "Проверить информацию",
+      "Сразу наказать",
+      "Опубликовать информацию",
+      "Игнорировать"
+    ],
+    0
+  ],
+  [
+    "Основной принцип служебной проверки?",
+    [
+      "Объективность",
+      "Предвзятость",
+      "Сокрытие информации",
+      "Заранее назначенное наказание"
+    ],
+    0
+  ],
+  [
+    "Как сотрудник ОСВ должен общаться с проверяемым сотрудником?",
+    [
+      "С угрозами",
+      "Корректно и в рамках полномочий",
+      "Провоцировать конфликт",
+      "Игнорировать"
+    ],
+    1
+  ],
+  [
+    "Для чего используется служебный рапорт?",
+    [
+      "Для развлечения",
+      "Для личной переписки",
+      "Для фиксации служебной информации",
+      "Для публикации новостей"
+    ],
+    2
+  ],
+  [
+    "Что делать при конфликте интересов?",
+    [
+      "Скрыть его",
+      "Продолжить проверку в личных интересах",
+      "Сообщить руководству и действовать по процедуре",
+      "Удалить материалы"
+    ],
+    2
+  ],
+  [
+    "Что необходимо сделать перед служебным действием, если это предусмотрено регламентом?",
+    [
+      "Представиться и сообщить основание действий",
+      "Скрыть должность",
+      "Сразу применить максимальные меры",
+      "Отказаться от фиксации"
+    ],
+    0
+  ],
+  [
+    "Что такое служебная субординация?",
+    [
+      "Личные просьбы руководителя",
+      "Установленный порядок взаимодействия и подчинения",
+      "Отказ от распоряжений",
+      "Самостоятельное изменение структуры"
+    ],
+    1
+  ],
+  [
+    "Можно ли использовать служебные полномочия для личной выгоды?",
+    [
+      "Да",
+      "Да, при высоком звании",
+      "Только если никто не заметит",
+      "Нет"
+    ],
+    3
+  ],
+  [
+    "Что делать при выявлении нарушения вне компетенции ОСВ?",
+    [
+      "Самостоятельно принять любое решение",
+      "Скрыть нарушение",
+      "Передать информацию компетентному подразделению",
+      "Удалить сведения"
+    ],
+    2
+  ],
+  [
+    "Что важно при оценке доказательств?",
+    [
+      "Популярность свидетеля",
+      "Звание сотрудника",
+      "Количество сообщений",
+      "Достоверность, относимость и законность получения"
+    ],
+    3
+  ],
+  [
+    "Что делать при обнаружении ошибки в служебном документе?",
+    [
+      "Исправить установленным способом",
+      "Удалить документ",
+      "Оставить ошибку",
+      "Обвинить другого сотрудника"
+    ],
+    0
+  ],
+  [
+    "Что является превышением служебных полномочий?",
+    [
+      "Выполнение обязанностей",
+      "Составление рапорта",
+      "Доклад руководителю",
+      "Действия за пределами предоставленных полномочий"
+    ],
+    3
+  ],
+  [
+    "Как обращаться с конфиденциальной служебной информацией?",
+    [
+      "Публиковать в соцсетях",
+      "Передавать знакомым",
+      "Передавать в общий чат",
+      "Не разглашать лицам без соответствующего доступа"
+    ],
+    3
+  ],
+  [
+    "Что делать при поступлении жалобы на сотрудника?",
+    [
+      "Удалить жалобу",
+      "Рассмотреть или передать по установленной процедуре",
+      "Сразу наказать сотрудника",
+      "Игнорировать"
+    ],
+    1
+  ],
+  [
+    "Что помогает избежать необоснованного обвинения?",
+    [
+      "Слухи",
+      "Личная неприязнь",
+      "Проверка фактов и материалов",
+      "Внешний вид сотрудника"
+    ],
+    2
+  ],
+  [
+    "Как поступить с законным распоряжением руководителя в рамках его компетенции?",
+    [
+      "Исполнить установленным порядком",
+      "Игнорировать",
+      "Изменить самостоятельно",
+      "Передать постороннему"
+    ],
+    0
+  ],
+  [
+    "Зачем фиксировать результаты служебной проверки?",
+    [
+      "Чтобы скрыть ошибки",
+      "Чтобы заменить все доказательства",
+      "Чтобы сохранить информацию о действиях и выводах",
+      "Чтобы избежать жалоб"
+    ],
+    2
+  ],
+  [
+    "Как действовать при конфликте с проверяемым сотрудником?",
+    [
+      "Оскорблять",
+      "Использовать полномочия для мести",
+      "Отказаться от фиксации",
+      "Сохранять спокойствие и действовать в рамках полномочий"
+    ],
+    3
+  ],
+  [
+    "Что является ключевым требованием к сотруднику ОСВ?",
+    [
+      "Личные связи",
+      "Законность, объективность и дисциплина",
+      "Возможность менять правила",
+      "Игнорирование процедур"
+    ],
+    1
+  ],
+  [
+    "Имеет ли сотрудник право использовать служебную информацию в личных целях?",
+    [
+      "Да",
+      "Только после смены",
+      "Только с разрешения коллеги",
+      "Нет"
+    ],
+    3
+  ],
+  [
+    "Что должен сделать сотрудник при получении информации о коррупционном нарушении?",
+    [
+      "Скрыть информацию",
+      "Сообщить и действовать по установленной процедуре",
+      "Обсудить с друзьями",
+      "Удалить сообщение"
+    ],
+    1
+  ],
+  [
+    "Что является основанием для проведения проверки?",
+    [
+      "Проверяемая информация о возможном нарушении",
+      "Личная неприязнь",
+      "Слухи без проверки",
+      "Желание наказать сотрудника"
+    ],
+    0
+  ],
+  [
+    "Может ли сотрудник ОСВ самостоятельно изменить установленный порядок проведения проверки?",
+    [
+      "Да, всегда",
+      "Да, если ему удобнее",
+      "Нет, только в рамках предусмотренной процедуры",
+      "Да, если проверяемый согласен"
+    ],
+    2
+  ],
+  [
+    "Что необходимо соблюдать при работе со служебными материалами?",
+    [
+      "Сохранность и установленный порядок доступа",
+      "Свободное распространение",
+      "Передачу друзьям",
+      "Удаление после прочтения"
+    ],
+    0
+  ],
+  [
+    "Что должен содержать служебный рапорт?",
+    [
+      "Только мнение автора",
+      "Достоверные сведения об обстоятельствах события",
+      "Личные оскорбления",
+      "Непроверенные слухи"
+    ],
+    1
+  ],
+  [
+    "Как должен поступить сотрудник при обнаружении нарушения со стороны своего знакомого?",
+    [
+      "Скрыть нарушение",
+      "Помочь избежать проверки",
+      "Действовать объективно и по процедуре",
+      "Уничтожить материалы"
+    ],
+    2
+  ],
+  [
+    "Допустимо ли давление на свидетеля при служебной проверке?",
+    [
+      "Да",
+      "Да, если дело важное",
+      "Только по просьбе руководителя",
+      "Нет"
+    ],
+    3
+  ],
+  [
+    "Что следует сделать при недостатке информации для принятия решения?",
+    [
+      "Придумать недостающие сведения",
+      "Провести дополнительную проверку",
+      "Сразу наказать сотрудника",
+      "Закрыть дело без проверки"
+    ],
+    1
+  ],
+  [
+    "Что означает объективность сотрудника ОСВ?",
+    [
+      "Отсутствие личной заинтересованности и учет фактов",
+      "Поддержка своего знакомого",
+      "Наказание независимо от обстоятельств",
+      "Доверие только одной стороне"
+    ],
+    0
+  ],
+  [
+    "Как следует хранить материалы служебной проверки?",
+    [
+      "В личном телефоне",
+      "В общем публичном чате",
+      "В установленном для служебных материалов порядке",
+      "У знакомого сотрудника"
+    ],
+    2
+  ],
+  [
+    "Что делать, если проверяемый сотрудник предоставляет дополнительные доказательства?",
+    [
+      "Игнорировать их",
+      "Рассмотреть их в рамках проверки",
+      "Сразу удалить",
+      "Запретить их предоставление"
+    ],
+    1
+  ],
+  [
+    "Какой принцип должен лежать в основе работы ОСВ?",
+    [
+      "Личная выгода",
+      "Предвзятость",
+      "Законность, объективность и ответственность",
+      "Сокрытие нарушений"
+    ],
+    2
+  ]
+]
 def db():
  c=sqlite3.connect(DB,timeout=20); c.row_factory=sqlite3.Row; c.execute("PRAGMA foreign_keys=ON")
- c.executescript("CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY AUTOINCREMENT,nickname TEXT UNIQUE NOT NULL,mask TEXT UNIQUE NOT NULL DEFAULT '',position TEXT NOT NULL,password TEXT NOT NULL,role TEXT NOT NULL DEFAULT 'Стажёр',created INTEGER NOT NULL,role_approved INTEGER NOT NULL DEFAULT 0,last_login INTEGER,role_requested TEXT,rank TEXT NOT NULL DEFAULT 'Без звания'); CREATE TABLE IF NOT EXISTS questions(id INTEGER PRIMARY KEY AUTOINCREMENT,body TEXT NOT NULL,options TEXT NOT NULL,correct INTEGER NOT NULL,points INTEGER NOT NULL DEFAULT 1,active INTEGER NOT NULL DEFAULT 1); CREATE TABLE IF NOT EXISTS attempts(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,score INTEGER NOT NULL DEFAULT 0,total INTEGER NOT NULL DEFAULT 33,passed INTEGER NOT NULL DEFAULT 0,answers TEXT NOT NULL DEFAULT '{}',created INTEGER NOT NULL,started INTEGER,finished INTEGER,status TEXT NOT NULL DEFAULT 'started',FOREIGN KEY(user_id) REFERENCES users(id)); CREATE TABLE IF NOT EXISTS exam_requests(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'pending',created INTEGER NOT NULL,reviewed INTEGER,reviewed_by TEXT,FOREIGN KEY(user_id) REFERENCES users(id)); CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER,nickname TEXT NOT NULL,event TEXT NOT NULL,details TEXT NOT NULL DEFAULT '',created INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS attempt_questions(attempt_id INTEGER NOT NULL,question_id INTEGER NOT NULL,body_snapshot TEXT NOT NULL,answer TEXT NOT NULL DEFAULT '',mark INTEGER,reviewed_by TEXT,reviewed_at INTEGER,PRIMARY KEY(attempt_id,question_id),FOREIGN KEY(attempt_id) REFERENCES attempts(id)); CREATE TABLE IF NOT EXISTS notifications(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,title TEXT NOT NULL,body TEXT NOT NULL,created INTEGER NOT NULL,seen INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS personnel_notes(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,kind TEXT NOT NULL,body TEXT NOT NULL,actor TEXT NOT NULL,created INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS chat_messages(id INTEGER PRIMARY KEY AUTOINCREMENT,room TEXT NOT NULL,sender_id INTEGER NOT NULL,recipient_id INTEGER,body TEXT NOT NULL,created INTEGER NOT NULL,FOREIGN KEY(sender_id) REFERENCES users(id),FOREIGN KEY(recipient_id) REFERENCES users(id)); CREATE TABLE IF NOT EXISTS user_history(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,actor TEXT NOT NULL,field TEXT NOT NULL,old_value TEXT,new_value TEXT,created INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS user_permissions(user_id INTEGER PRIMARY KEY,permissions TEXT NOT NULL DEFAULT '[]');")
+ c.executescript("CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY AUTOINCREMENT,nickname TEXT UNIQUE NOT NULL,position TEXT NOT NULL,password TEXT NOT NULL,role TEXT NOT NULL DEFAULT 'Стажёр',created INTEGER NOT NULL,role_approved INTEGER NOT NULL DEFAULT 0,last_login INTEGER,role_requested TEXT,rank TEXT NOT NULL DEFAULT 'Без звания'); CREATE TABLE IF NOT EXISTS questions(id INTEGER PRIMARY KEY AUTOINCREMENT,body TEXT NOT NULL,options TEXT NOT NULL,correct INTEGER NOT NULL,points INTEGER NOT NULL DEFAULT 1,active INTEGER NOT NULL DEFAULT 1); CREATE TABLE IF NOT EXISTS attempts(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,score INTEGER NOT NULL DEFAULT 0,total INTEGER NOT NULL DEFAULT 33,passed INTEGER NOT NULL DEFAULT 0,answers TEXT NOT NULL DEFAULT '{}',created INTEGER NOT NULL,started INTEGER,finished INTEGER,status TEXT NOT NULL DEFAULT 'started',FOREIGN KEY(user_id) REFERENCES users(id)); CREATE TABLE IF NOT EXISTS exam_requests(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'pending',created INTEGER NOT NULL,reviewed INTEGER,reviewed_by TEXT,FOREIGN KEY(user_id) REFERENCES users(id)); CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER,nickname TEXT NOT NULL,event TEXT NOT NULL,details TEXT NOT NULL DEFAULT '',created INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS attempt_questions(attempt_id INTEGER NOT NULL,question_id INTEGER NOT NULL,body_snapshot TEXT NOT NULL,answer TEXT NOT NULL DEFAULT '',mark INTEGER,reviewed_by TEXT,reviewed_at INTEGER,PRIMARY KEY(attempt_id,question_id),FOREIGN KEY(attempt_id) REFERENCES attempts(id)); CREATE TABLE IF NOT EXISTS notifications(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,title TEXT NOT NULL,body TEXT NOT NULL,created INTEGER NOT NULL,seen INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS personnel_notes(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,kind TEXT NOT NULL,body TEXT NOT NULL,actor TEXT NOT NULL,created INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS chat_messages(id INTEGER PRIMARY KEY AUTOINCREMENT,room TEXT NOT NULL,sender_id INTEGER NOT NULL,recipient_id INTEGER,body TEXT NOT NULL,created INTEGER NOT NULL,FOREIGN KEY(sender_id) REFERENCES users(id),FOREIGN KEY(recipient_id) REFERENCES users(id)); CREATE TABLE IF NOT EXISTS user_history(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,actor TEXT NOT NULL,field TEXT NOT NULL,old_value TEXT,new_value TEXT,created INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS user_permissions(user_id INTEGER PRIMARY KEY,permissions TEXT NOT NULL DEFAULT '[]');")
  # additive migrations for existing databases
  cols={r['name'] for r in c.execute('PRAGMA table_info(users)')}
- for name,ddl in [('mask',"TEXT NOT NULL DEFAULT ''"),('role_approved','INTEGER NOT NULL DEFAULT 0'),('last_login','INTEGER'),('role_requested','TEXT'),('rank',"TEXT NOT NULL DEFAULT 'Без звания'")]:
+ for name,ddl in [('role_approved','INTEGER NOT NULL DEFAULT 0'),('last_login','INTEGER'),('role_requested','TEXT'),('rank',"TEXT NOT NULL DEFAULT 'Без звания'")]:
   if name not in cols: c.execute(f'ALTER TABLE users ADD COLUMN {name} {ddl}')
  acols={r['name'] for r in c.execute('PRAGMA table_info(attempts)')}
  for name,ddl in [('started','INTEGER'),('finished','INTEGER'),('status',"TEXT NOT NULL DEFAULT 'started'")]:
@@ -48,41 +377,28 @@ def require(req,staff=False,owner=False):
  if staff and (u['role'] not in ('Владелец','Инструктор','Начальник ОСВ','Заместитель начальника ОСВ') or (u['role']!='Владелец' and not u['role_approved'])):raise HTTPException(403,'Недостаточно прав или должность не подтверждена')
  if owner and u['role'] not in ('Владелец','Начальник ОСВ'):raise HTTPException(403,'Недостаточно прав: требуется владелец или начальник ОСВ')
  return u
-class Register(BaseModel): nickname:str=Field(min_length=3,max_length=32); mask:str=Field(min_length=1,max_length=12,pattern=r'^\d{1,12}$'); position:str='Стажёр'; password:str=Field(min_length=6,max_length=100)
+class Register(BaseModel): nickname:str=Field(min_length=3,max_length=32); position:str=Field(min_length=2,max_length=60); password:str=Field(min_length=6,max_length=100)
 class Login(BaseModel): nickname:str; password:str
-class QuestionIn(BaseModel): body:str=Field(min_length=3,max_length=700); options:list[str]=Field(default_factory=list); correct:int=0; points:int=Field(default=1,ge=1,le=1); active:bool=True
+class QuestionIn(BaseModel): body:str=Field(min_length=3,max_length=700); options:list[str]; correct:int; points:int=Field(default=1,ge=1,le=1); active:bool=True
 class Answers(BaseModel): answers:dict[str,str]
 class RoleIn(BaseModel): role:str
 
 def validate_question(x: QuestionIn):
- if len(x.options) not in (0,4): raise HTTPException(400, 'Оставьте варианты пустыми для письменного вопроса или укажите ровно 4 варианта')
+ if len(x.options) != 4: raise HTTPException(400, 'Должно быть ровно 4 варианта ответа')
  if any(not isinstance(o, str) or not o.strip() or len(o) > 300 for o in x.options): raise HTTPException(400, 'Каждый вариант должен содержать 1–300 символов')
- if x.options and x.correct not in range(4): raise HTTPException(400, 'Правильный ответ должен быть от 0 до 3')
+ if x.correct not in range(4): raise HTTPException(400, 'Правильный ответ должен быть от 0 до 3')
  if not x.body.strip(): raise HTTPException(400, 'Введите текст вопроса')
 @app.on_event('startup')
 def startup():
- c=db()
- # Keep stable question IDs for existing attempts, but refresh the active exam bank.
- rows=c.execute('SELECT id FROM questions ORDER BY id LIMIT 33').fetchall()
- for i,body in enumerate(QUESTIONS):
-  if i < len(rows): c.execute("UPDATE questions SET body=?,options='[]',correct=0,points=1,active=1 WHERE id=?",(body,rows[i]['id']))
-  else: c.execute("INSERT INTO questions(body,options,correct,points,active) VALUES(? , '[]', 0, 1, 1)",(body,))
- ids=[r['id'] for r in c.execute('SELECT id FROM questions ORDER BY id LIMIT 33').fetchall()]
- if ids:
-  marks=','.join('?' for _ in ids)
-  c.execute(f'UPDATE questions SET active=0 WHERE id NOT IN ({marks})',ids)
+ c=db(); n=c.execute('SELECT COUNT(*) FROM questions').fetchone()[0]
+ if n==0:
+  for body,options,correct in QUESTIONS:c.execute('INSERT INTO questions(body,options,correct,points,active) VALUES(?,?,?,1,1)',(body,json.dumps(options,ensure_ascii=False),correct))
  owner=c.execute('SELECT * FROM users WHERE nickname=?',(OWNER,)).fetchone()
  if not owner:c.execute('INSERT INTO users(nickname,position,password,role,created,role_approved,role_requested) VALUES(?,?,?,?,?,1,?)',(OWNER,'Владелец ОСВ',pw_hash(os.getenv('OWNER_PASSWORD','ChangeMe_123!')),'Владелец',int(time.time()),'Владелец'))
  else:c.execute("UPDATE users SET role='Владелец',role_approved=1,role_requested='Владелец' WHERE nickname=?",(OWNER,))
  c.commit();c.close()
 @app.get('/')
 def index():return FileResponse(ROOT/'static'/'index.html')
-@app.get('/Host.png')
-def host_banner():
- p=ROOT/'Host.png'
- if not p.exists(): p=ROOT/'banner.jpg'
- if not p.exists(): raise HTTPException(404,'Добавьте Host.png или banner.jpg в корень проекта')
- return FileResponse(p)
 @app.get('/banner.jpg')
 def banner():
  p=ROOT/'banner.jpg'
@@ -90,20 +406,18 @@ def banner():
  return FileResponse(p,media_type='image/jpeg')
 @app.get('/api/health')
 def health():return {'status':'online','service':'OSV Attestation'}
-def user_dict(u):return {'id':u['id'],'nickname':u['nickname'],'mask':u['mask'] if 'mask' in u.keys() else '', 'position':u['position'],'role':u['role'],'role_approved':bool(u['role_approved']),'role_requested':u['role_requested'],'last_login':u['last_login'],'rank':u['rank'] if 'rank' in u.keys() else 'Без звания'}
+def user_dict(u):return {'id':u['id'],'nickname':u['nickname'],'position':u['position'],'role':u['role'],'role_approved':bool(u['role_approved']),'role_requested':u['role_requested'],'last_login':u['last_login'],'rank':u['rank'] if 'rank' in u.keys() else 'Без звания'}
 @app.post('/api/register')
 def register(x:Register,response:Response):
- nick=x.nickname.strip(); mask=x.mask.strip(); role=x.position.strip()
- if role not in ROLES or role=='Владелец':raise HTTPException(400,'Выберите допустимую запрашиваемую должность')
- if not mask.isdigit():raise HTTPException(400,'Игровая маска должна быть числовым ID')
+ nick=x.nickname.strip(); role=x.position.strip()
+ if role not in ROLES:raise HTTPException(400,'Выберите должность из списка')
  c=db()
- if c.execute('SELECT 1 FROM users WHERE mask=?',(mask,)).fetchone(): c.close(); raise HTTPException(409,'Этот игровой ID уже зарегистрирован')
  try:
-  cur=c.execute("INSERT INTO users(nickname,mask,position,password,role,created,role_approved,role_requested) VALUES(?,?,?,?,?,?,0,?)",(nick,mask,role,pw_hash(x.password),'Стажёр',int(time.time()),role)); uid=cur.lastrowid
+  cur=c.execute("INSERT INTO users(nickname,position,password,role,created,role_approved,role_requested) VALUES(?,?,?,?,?,0,?)",(nick,'Стажёр',pw_hash(x.password),'Стажёр',int(time.time()),role)); uid=cur.lastrowid
   u=c.execute('SELECT * FROM users WHERE id=?',(uid,)).fetchone();audit(c,u,'Регистрация',f'Запрошена должность: {role}');now=int(time.time());
-  for manager in c.execute("SELECT id FROM users WHERE role IN ('Инструктор','Владелец','Начальник ОСВ','Заместитель начальника ОСВ') AND role_approved=1").fetchall():c.execute('INSERT INTO notifications(user_id,title,body,created) VALUES(?,?,?,?)',(manager['id'],'Заявка на должность',f'{nick} запросил должность: {role}',now))
+  for manager in c.execute("SELECT id FROM users WHERE role IN ('Владелец','Начальник ОСВ','Заместитель начальника ОСВ') AND role_approved=1").fetchall():c.execute('INSERT INTO notifications(user_id,title,body,created) VALUES(?,?,?,?)',(manager['id'],'Новая регистрация',f'{nick} подал заявку на вступление',now))
   c.commit()
- except sqlite3.IntegrityError:c.close();raise HTTPException(409,'Такой игровой ник или игровой ID уже зарегистрирован')
+ except sqlite3.IntegrityError:c.close();raise HTTPException(409,'Такой игровой ник уже зарегистрирован')
  c.close();response.set_cookie('osv_session',token(uid),httponly=True,samesite='lax',secure=os.getenv('COOKIE_SECURE','0')=='1',max_age=1209600);return {'ok':True}
 @app.post('/api/login')
 def login(x:Login,response:Response):
@@ -123,34 +437,36 @@ def me(req:Request):
  c=db();now=int(time.time());c.execute('UPDATE users SET last_login=COALESCE(last_login,?) WHERE id=?',(now,u['id']));u=c.execute('SELECT * FROM users WHERE id=?',(u['id'],)).fetchone();req_status=c.execute("SELECT status,created,reviewed FROM exam_requests WHERE user_id=? ORDER BY id DESC LIMIT 1",(u['id'],)).fetchone();attempt=c.execute("SELECT id,started,finished,score,total,passed,status FROM attempts WHERE user_id=? ORDER BY id DESC LIMIT 1",(u['id'],)).fetchone();c.close();return {'user':user_dict(u),'exam_request':dict(req_status) if req_status else None,'attempt':dict(attempt) if attempt else None}
 @app.get('/api/roster')
 def roster():
- c=db();rows=c.execute("SELECT id,nickname,mask,role,role_approved,created FROM users WHERE role_approved=1 ORDER BY CASE role WHEN 'Владелец' THEN 0 WHEN 'Начальник ОСВ' THEN 1 WHEN 'Заместитель начальника ОСВ' THEN 2 WHEN 'Старший инспектор' THEN 3 WHEN 'Инспектор' THEN 4 WHEN 'Инструктор' THEN 5 ELSE 6 END,nickname COLLATE NOCASE").fetchall();c.close();return [dict(r) for r in rows]
+ c=db();rows=c.execute("SELECT id,nickname,role,role_approved,created FROM users WHERE role_approved=1 ORDER BY CASE role WHEN 'Владелец' THEN 0 WHEN 'Начальник ОСВ' THEN 1 WHEN 'Заместитель начальника ОСВ' THEN 2 WHEN 'Старший инспектор' THEN 3 WHEN 'Инспектор' THEN 4 WHEN 'Инструктор' THEN 5 ELSE 6 END,nickname COLLATE NOCASE").fetchall();c.close();return [dict(r) for r in rows]
 @app.post('/api/exam/request')
 def exam_request(req:Request):
  u=require(req)
- if u['role']!='Стажёр':raise HTTPException(403,'Аттестация доступна только стажёрам')
- if not u['role_approved']:raise HTTPException(403,'Сначала дождитесь подтверждения регистрации руководством')
+ if not u['role_approved']:raise HTTPException(403,'Сначала дождитесь подтверждения должности владельцем')
+ if u['role']=='Владелец':return {'ok':True,'status':'approved'}
  c=db();old=c.execute("SELECT * FROM exam_requests WHERE user_id=? AND status='pending' ORDER BY id DESC LIMIT 1",(u['id'],)).fetchone()
  if old:c.close();return {'ok':True,'status':'pending'}
  cur=c.execute("INSERT INTO exam_requests(user_id,status,created) VALUES(?,'pending',?)",(u['id'],int(time.time())));now=int(time.time());audit(c,u,'Заявка на аттестацию подана',f'Заявка №{cur.lastrowid}');
- for manager in c.execute("SELECT id FROM users WHERE role IN ('Инструктор','Владелец','Начальник ОСВ','Заместитель начальника ОСВ') AND role_approved=1").fetchall():c.execute('INSERT INTO notifications(user_id,title,body,created) VALUES(?,?,?,?)',(manager['id'],'Новая заявка на аттестацию',f'{u["nickname"]} подал заявку №{cur.lastrowid}',now))
+ for manager in c.execute("SELECT id FROM users WHERE role IN ('Владелец','Начальник ОСВ','Заместитель начальника ОСВ') AND role_approved=1").fetchall():c.execute('INSERT INTO notifications(user_id,title,body,created) VALUES(?,?,?,?)',(manager['id'],'Новая заявка на аттестацию',f'{u["nickname"]} подал заявку №{cur.lastrowid}',now))
  c.commit();c.close();return {'ok':True,'status':'pending'}
 @app.post('/api/exam/start')
 def start_exam(req: Request):
  u = require(req)
- if u['role']!='Стажёр': raise HTTPException(403, 'Аттестация доступна только стажёрам')
- if not u['role_approved']: raise HTTPException(403, 'Ваша регистрация ещё не подтверждена')
+ if not u['role_approved']: raise HTTPException(403, 'Ваша должность ещё не подтверждена')
  c = db()
  try:
-  approval = c.execute("SELECT status FROM exam_requests WHERE user_id=? ORDER BY id DESC LIMIT 1", (u['id'],)).fetchone()
-  if not approval or approval['status'] != 'approved': raise HTTPException(403, 'Сначала получите одобрение заявки на аттестацию')
+  if u['role'] != 'Владелец':
+   approval = c.execute("SELECT status FROM exam_requests WHERE user_id=? ORDER BY id DESC LIMIT 1", (u['id'],)).fetchone()
+   if not approval or approval['status'] != 'approved': raise HTTPException(403, 'Сначала получите одобрение заявки на аттестацию')
   active = c.execute("SELECT id FROM attempts WHERE user_id=? AND status='started' ORDER BY id DESC LIMIT 1", (u['id'],)).fetchone()
   if active: return {'ok': True, 'attempt_id': active['id'], 'status': 'started', 'resumed': True}
-  qs = c.execute("SELECT id,body,options FROM questions WHERE active=1 ORDER BY RANDOM() LIMIT ?", (QUESTION_COUNT,)).fetchall()
+  qs = c.execute("SELECT id,body,options FROM questions WHERE active=1 AND options!='[]' ORDER BY RANDOM() LIMIT ?", (QUESTION_COUNT,)).fetchall()
   if len(qs) < QUESTION_COUNT: raise HTTPException(400, f'Недостаточно активных вопросов: нужно {QUESTION_COUNT}, доступно {len(qs)}')
   now = int(time.time())
   cur = c.execute("INSERT INTO attempts(user_id,score,total,passed,answers,created,started,status) VALUES(?,0,33,0,'{}',?,?,'started')", (u['id'], now, now))
   aid = cur.lastrowid
   for q in qs:
+   options = json.loads(q['options'] or '[]')
+   if len(options) != 4: raise HTTPException(400, f'Вопрос №{q["id"]} должен иметь 4 варианта ответа')
    c.execute("INSERT INTO attempt_questions(attempt_id,question_id,body_snapshot,answer) VALUES(?,?,?,'')", (aid,q['id'],q['body']))
   audit(c,u,'Аттестация начата',f'Попытка №{aid}')
   c.commit()
@@ -252,19 +568,19 @@ def decide_role(uid:int,decision:str,req:Request):
  c=db();u=c.execute('SELECT * FROM users WHERE id=? AND nickname<>?',(uid,OWNER)).fetchone()
  if not u:c.close();raise HTTPException(404,'Пользователь не найден')
  if decision=='approve':c.execute('UPDATE users SET role=COALESCE(role_requested,position),position=COALESCE(role_requested,position),role_approved=1 WHERE id=?',(uid,));event='Должность одобрена'
- else:c.execute("UPDATE users SET role='Стажёр',position='Стажёр',role_requested='Стажёр',role_approved=1 WHERE id=?",(uid,));event='Должность отклонена; установлен статус стажёра'
+ else:c.execute("UPDATE users SET role_approved=0,role='Стажёр' WHERE id=?",(uid,));event='Должность отклонена'
  audit(c,actor,event,f"{u['nickname']} · {u['role_requested']}");c.commit();c.close();return {'ok':True}
 @app.get('/api/admin/exam-requests')
 def admin_exam_requests(req:Request):
- actor=require(req,staff=True);c=db();rows=c.execute("SELECT r.id,r.user_id,r.status,r.created,r.reviewed,r.reviewed_by,u.nickname,u.role,u.mask FROM exam_requests r JOIN users u ON u.id=r.user_id ORDER BY CASE r.status WHEN 'pending' THEN 0 ELSE 1 END,r.created DESC").fetchall();c.close();return [dict(r) for r in rows]
+ require(req,owner=True);c=db();rows=c.execute("SELECT r.id,r.user_id,r.status,r.created,r.reviewed,r.reviewed_by,u.nickname,u.role FROM exam_requests r JOIN users u ON u.id=r.user_id ORDER BY CASE r.status WHEN 'pending' THEN 0 ELSE 1 END,r.created DESC").fetchall();c.close();return [dict(r) for r in rows]
 @app.post('/api/admin/exam-requests/{rid}/{decision}')
 def decide_exam(rid:int,decision:str,req:Request):
- actor=require(req,staff=True)
+ actor=require(req,owner=True)
  if decision not in ('approve','reject'):raise HTTPException(400,'Некорректное решение')
  c=db();r=c.execute('SELECT r.*,u.nickname,u.role_approved FROM exam_requests r JOIN users u ON u.id=r.user_id WHERE r.id=?',(rid,)).fetchone()
  if not r:c.close();raise HTTPException(404,'Заявка не найдена')
  if not r['role_approved']:c.close();raise HTTPException(400,'Сначала одобрите должность участника')
- status='approved' if decision=='approve' else 'rejected';now=int(time.time());c.execute('UPDATE exam_requests SET status=?,reviewed=?,reviewed_by=? WHERE id=?',(status,now,actor['nickname'],rid));audit(c,actor,'Заявка на аттестацию '+('одобрена' if decision=='approve' else 'отклонена'),f"{r['nickname']} · заявка №{rid}");c.execute('INSERT INTO notifications(user_id,title,body,created) VALUES(?,?,?,?)',(r['user_id'],'Решение по заявке на аттестацию',('Инструктор допустил вас к аттестации.' if decision=='approve' else 'Инструктор отклонил заявку. Вы можете подать её повторно.'),now));c.commit();c.close();return {'ok':True,'status':status}
+ status='approved' if decision=='approve' else 'rejected';now=int(time.time());c.execute('UPDATE exam_requests SET status=?,reviewed=?,reviewed_by=? WHERE id=?',(status,now,actor['nickname'],rid));audit(c,actor,'Заявка на аттестацию '+('одобрена' if decision=='approve' else 'отклонена'),f"{r['nickname']} · заявка №{rid}");c.commit();c.close();return {'ok':True,'status':status}
 @app.patch('/api/admin/users/{uid}/role')
 def set_role(uid:int,x:RoleIn,req:Request):
  actor=require(req,owner=True)
@@ -277,7 +593,7 @@ def set_role(uid:int,x:RoleIn,req:Request):
  c.execute('INSERT INTO user_history(user_id,actor,field,old_value,new_value,created) VALUES(?,?,?,?,?,?)',(uid,actor['nickname'],'Должность',u['role'],x.role,int(time.time()))); audit(c,actor,'Должность изменена',f"{u['nickname']} · {x.role}"); c.execute('INSERT INTO notifications(user_id,title,body,created) VALUES(?,?,?,?)',(uid,'Изменена должность',f'Новая должность: {x.role}',int(time.time()))); c.commit();c.close();return {'ok':True}
 @app.delete('/api/admin/exam-requests/{rid}')
 def delete_exam_request(rid:int,req:Request):
- actor=require(req,staff=True);c=db();r=c.execute('SELECT r.*,u.nickname FROM exam_requests r JOIN users u ON u.id=r.user_id WHERE r.id=?',(rid,)).fetchone()
+ actor=require(req,owner=True);c=db();r=c.execute('SELECT r.*,u.nickname FROM exam_requests r JOIN users u ON u.id=r.user_id WHERE r.id=?',(rid,)).fetchone()
  if not r:c.close();raise HTTPException(404,'Заявка не найдена')
  audit(c,actor,'Заявка на аттестацию удалена',f"{r['nickname']} · заявка №{rid}");c.execute('DELETE FROM exam_requests WHERE id=?',(rid,));c.commit();c.close();return {'ok':True}
 @app.patch('/api/admin/users/{uid}/rank')
@@ -336,11 +652,7 @@ def chat_messages(req:Request,room:str='general',peer:int|None=None):
 @app.post('/api/chat/messages')
 def chat_send(payload:dict,req:Request):
  u=require(req); room=str(payload.get('room','general')); body=str(payload.get('body','')).strip(); peer=payload.get('peer')
- is_image=bool(re.fullmatch(r'data:image/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+',body))
- is_audio=bool(re.fullmatch(r'data:audio/(?:webm|ogg|mpeg|wav);base64,[A-Za-z0-9+/=]+',body))
- if not body or (len(body)>2000 and not ((is_image or is_audio) and len(body)<=4000000)):
-  raise HTTPException(400,'Текст: до 2000 символов; медиа: до 3 МБ в закодированном виде')
- if len(body)>2000 and not (is_image or is_audio): raise HTTPException(400,'Недопустимый формат вложения')
+ if not body or len(body)>2000: raise HTTPException(400,'Сообщение должно содержать 1–2000 символов')
  if room in ('general','leadership'):
   if not can_chat_room(u,room): raise HTTPException(403,'Нет доступа к этому чату')
   recipient=None
