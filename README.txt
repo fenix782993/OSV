@@ -1,25 +1,32 @@
-ОСВ — RED COMMAND PORTAL
+ОСВ — BLUE COMMAND PORTAL
 
-Что внутри:
-- FastAPI backend с существующей логикой авторизации, заявок, аттестации, ролей, вопросов, результатов, аудита и чата.
-- Новый красно-чёрный интерфейс с фиксированной боковой панелью, мобильной нижней навигацией, 3D/glow карточками и сервисами.
-- Fenix VPN: https://t.me/fenixVPNrobot
-- Fenix Stars: https://t.me/Fenix_stars_bot
-- Fenix Support: https://t.me/fenix_supportBot
-
-Запуск локально Windows:
-1) python -m venv .venv
-2) .venv\\Scripts\\activate
-3) pip install -r requirements.txt
-4) set OWNER_PASSWORD=ChangeMe_123!
-5) uvicorn main:app --reload --port 8000
+Что изменено в этой сборке:
+- Синий/чёрный премиум-интерфейс, отдельные экраны меню, PC + mobile.
+- Регистрация снова содержит маску/игровой ID, ник, запрашиваемую должность и пароль.
+- Состав — таблица ID, ник, маска, должность, звание, статус. Руководство может менять маску, должность и звание, а также удалять сотрудников; Fenix_Dinero защищён.
+- Аттестация обязательна только для Стажёров.
+- Инструкторы, Начальник ОСВ, Заместитель начальника ОСВ и Владелец могут открыть письменную аттестацию без отдельной заявки.
+- Инструкторы имеют полный доступ к разделу проверки работ. Руководство также может проверять ответы.
+- 33 письменных вопроса, проходной балл 28/33.
+- Добавлены маленькие быст-access баннеры с иконками: Аттестация, Состав, Проверка.
+- Fenix Support и служебный чат убраны из интерфейса.
 
 Render:
 Build: pip install -r requirements.txt
 Start: uvicorn main:app --host 0.0.0.0 --port $PORT
 
-Важно:
-Текущий backend этой сборки использует SQLite. render.yaml подключает persistent disk /var/data, поэтому данные сохраняются на Render при наличии диска. Neon в эту сборку не подключён автоматически.
+Переменные:
+APP_SECRET — Generate value
+OWNER_PASSWORD — пароль владельца
+DB_PATH — /var/data/osv.db
+COOKIE_SECURE — 1
 
-Банк вопросов:
-При старте аттестации backend делает SELECT ... ORDER BY RANDOM() LIMIT 33 из активных вопросов. Поэтому если в базе 100 активных вопросов, конкретная попытка получает случайные 33 и сохраняет именно их в attempt_questions.
+Локально Windows:
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+set OWNER_PASSWORD=ChangeMe_123!
+uvicorn main:app --reload --port 8000
+
+База данных:
+Сборка использует SQLite. На Render путь берётся из DB_PATH, поэтому persistent disk из render.yaml действительно используется. Neon в эту сборку не подключён.
