@@ -53,6 +53,7 @@ def db():
  cols={r['name'] for r in c.execute('PRAGMA table_info(users)')}
  for name,ddl in [('role_approved','INTEGER NOT NULL DEFAULT 0'),('last_login','INTEGER'),('role_requested','TEXT'),('rank',"TEXT NOT NULL DEFAULT 'Без звания'")]:
   if name not in cols: c.execute(f'ALTER TABLE users ADD COLUMN {name} {ddl}')
+ c.execute("UPDATE users SET role_requested=position WHERE role_approved=0 AND (role_requested IS NULL OR role_requested='') AND position IN ('Начальник ОСВ','Заместитель начальника ОСВ','Инструктор','Старший инспектор','Инспектор','Стажёр')")
  acols={r['name'] for r in c.execute('PRAGMA table_info(attempts)')}
  for name,ddl in [('started','INTEGER'),('finished','INTEGER'),('status',"TEXT NOT NULL DEFAULT 'started'")]:
   if name not in acols: c.execute(f'ALTER TABLE attempts ADD COLUMN {name} {ddl}')
@@ -123,6 +124,8 @@ def user_dict(u):return {'id':u['id'],'nickname':u['nickname'],'mask':u['mask'] 
 @app.post('/api/register')
 def register(x:Register,response:Response):
  nick=x.nickname.strip(); mask=x.mask.strip(); role=x.position.strip()
+ if role not in ROLES: raise HTTPException(400,'Выберите корректную должность')
+ if role=='Стажёр': role='Стажёр'
  if not mask.isdigit(): raise HTTPException(400,'Маска должна содержать только цифры')
  if role not in ROLES:raise HTTPException(400,'Выберите должность из списка')
  c=db()
@@ -281,7 +284,7 @@ def admin_users(req:Request):
  require(req,staff=True);c=db();rows=c.execute('SELECT id,nickname,mask,position,role,role_approved,role_requested,created,last_login,rank FROM users ORDER BY created DESC').fetchall();c.close();return [dict(r) for r in rows]
 @app.get('/api/admin/role-requests')
 def role_requests(req:Request):
- require(req,owner=True);c=db();rows=c.execute("SELECT id,nickname,position,role_requested,created FROM users WHERE role_approved=0 AND nickname<>? ORDER BY created",(OWNER,)).fetchall();c.close();return [dict(r) for r in rows]
+ require(req,owner=True);c=db();rows=c.execute("SELECT id,nickname,position,COALESCE(NULLIF(role_requested,''),position) AS role_requested,role,role_approved,created FROM users WHERE role_approved=0 AND nickname<>? ORDER BY created",(OWNER,)).fetchall();c.close();return [dict(r) for r in rows]
 @app.post('/api/admin/role-requests/{uid}/{decision}')
 def decide_role(uid:int,decision:str,req:Request):
  actor=require(req,owner=True)
