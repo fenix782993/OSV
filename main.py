@@ -87,6 +87,7 @@ class QuestionIn(BaseModel): body:str=Field(min_length=3,max_length=700); option
 class Answers(BaseModel): answers:dict[str,str]
 class RoleIn(BaseModel): role:str
 class MaskIn(BaseModel): mask:str=Field(min_length=1,max_length=32)
+class AnswerSave(BaseModel): question_id:int; answer:str=Field(default='',max_length=10000)
 
 def validate_question(x: QuestionIn):
  if not x.body.strip(): raise HTTPException(400, 'Введите текст вопроса')
@@ -159,7 +160,7 @@ def exam_request(req:Request):
  c=db();old=c.execute("SELECT * FROM exam_requests WHERE user_id=? AND status='pending' ORDER BY id DESC LIMIT 1",(u['id'],)).fetchone()
  if old:c.close();return {'ok':True,'status':'pending'}
  cur=c.execute("INSERT INTO exam_requests(user_id,status,created) VALUES(?,'pending',?)",(u['id'],int(time.time())));now=int(time.time());audit(c,u,'Заявка на аттестацию подана',f'Заявка №{cur.lastrowid}');
- for manager in c.execute("SELECT id FROM users WHERE role IN ('Владелец','Начальник ОСВ','Заместитель начальника ОСВ') AND role_approved=1").fetchall():c.execute('INSERT INTO notifications(user_id,title,body,created) VALUES(?,?,?,?)',(manager['id'],'Новая заявка на аттестацию',f'{u["nickname"]} подал заявку №{cur.lastrowid}',now))
+ for reviewer in c.execute("SELECT id FROM users WHERE role IN ('Владелец','Начальник ОСВ','Заместитель начальника ОСВ','Инструктор') AND role_approved=1").fetchall():c.execute('INSERT INTO notifications(user_id,title,body,created) VALUES(?,?,?,?)',(reviewer['id'],'Новая заявка на аттестацию',f'{u["nickname"]} подал заявку №{cur.lastrowid}',now))
  c.commit();c.close();return {'ok':True,'status':'pending'}
 @app.post('/api/exam/start')
 def start_exam(req: Request):
@@ -186,6 +187,14 @@ def start_exam(req: Request):
   c.rollback()
   raise
  finally: c.close()
+
+@app.post('/api/exam/answer')
+def save_exam_answer(x:AnswerSave,req:Request):
+ u=require(req);c=db();a=c.execute("SELECT id FROM attempts WHERE user_id=? AND status='started' ORDER BY id DESC LIMIT 1",(u['id'],)).fetchone()
+ if not a:c.close();raise HTTPException(403,'Нет активной аттестации')
+ q=c.execute('SELECT question_id FROM attempt_questions WHERE attempt_id=? AND question_id=?',(a['id'],x.question_id)).fetchone()
+ if not q:c.close();raise HTTPException(404,'Вопрос не найден в текущей аттестации')
+ c.execute('UPDATE attempt_questions SET answer=? WHERE attempt_id=? AND question_id=?',(x.answer.strip(),a['id'],x.question_id));c.commit();c.close();return {'ok':True}
 
 @app.get('/api/questions')
 def questions(req:Request):
@@ -284,10 +293,10 @@ def decide_role(uid:int,decision:str,req:Request):
  audit(c,actor,event,f"{u['nickname']} · {u['role_requested']}");c.commit();c.close();return {'ok':True}
 @app.get('/api/admin/exam-requests')
 def admin_exam_requests(req:Request):
- require(req,owner=True);c=db();rows=c.execute("SELECT r.id,r.user_id,r.status,r.created,r.reviewed,r.reviewed_by,u.nickname,u.role FROM exam_requests r JOIN users u ON u.id=r.user_id ORDER BY CASE r.status WHEN 'pending' THEN 0 ELSE 1 END,r.created DESC").fetchall();c.close();return [dict(r) for r in rows]
+ require(req,staff=True);c=db();rows=c.execute("SELECT r.id,r.user_id,r.status,r.created,r.reviewed,r.reviewed_by,u.nickname,u.role FROM exam_requests r JOIN users u ON u.id=r.user_id ORDER BY CASE r.status WHEN 'pending' THEN 0 ELSE 1 END,r.created DESC").fetchall();c.close();return [dict(r) for r in rows]
 @app.post('/api/admin/exam-requests/{rid}/{decision}')
 def decide_exam(rid:int,decision:str,req:Request):
- actor=require(req,owner=True)
+ actor=require(req,staff=True)
  if decision not in ('approve','reject'):raise HTTPException(400,'Некорректное решение')
  c=db();r=c.execute('SELECT r.*,u.nickname,u.role_approved FROM exam_requests r JOIN users u ON u.id=r.user_id WHERE r.id=?',(rid,)).fetchone()
  if not r:c.close();raise HTTPException(404,'Заявка не найдена')
