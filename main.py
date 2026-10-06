@@ -127,7 +127,7 @@ def register(x:Register,response:Response):
  if role not in ROLES:raise HTTPException(400,'Выберите должность из списка')
  c=db()
  try:
-  cur=c.execute("INSERT INTO users(nickname,mask,position,password,role,created,role_approved,role_requested) VALUES(?,?,?,?,?,?,0,?)",(nick,x.mask.strip(),'Стажёр',pw_hash(x.password),'Стажёр',int(time.time()),role)); uid=cur.lastrowid
+  cur=c.execute("INSERT INTO users(nickname,mask,position,password,role,created,role_approved,role_requested) VALUES(?,?,?,?,?,?,0,?)",(nick,x.mask.strip(),role,pw_hash(x.password),'Стажёр',int(time.time()),role)); uid=cur.lastrowid
   u=c.execute('SELECT * FROM users WHERE id=?',(uid,)).fetchone();audit(c,u,'Регистрация',f'Запрошена должность: {role}');now=int(time.time());
   for manager in c.execute("SELECT id FROM users WHERE role IN ('Владелец','Начальник ОСВ','Заместитель начальника ОСВ') AND role_approved=1").fetchall():c.execute('INSERT INTO notifications(user_id,title,body,created) VALUES(?,?,?,?)',(manager['id'],'Новая регистрация',f'{nick} подал заявку на вступление',now))
   c.commit()
