@@ -90,7 +90,7 @@ def require(req,staff=False,owner=False):
  u=current(req)
  if not u: raise HTTPException(401,'Войдите в аккаунт')
  if staff and (u['role'] not in ('Владелец','Инструктор','Начальник ОСВ','Заместитель начальника ОСВ','Администратор') or (u['role']!='Владелец' and not u['role_approved'])):raise HTTPException(403,'Недостаточно прав или должность не подтверждена')
- if owner and u['role'] not in ('Владелец','Начальник ОСВ'):raise HTTPException(403,'Недостаточно прав: требуется владелец или начальник ОСВ')
+ if owner and (u['nickname']!=OWNER or u['role']!='Владелец' or not u['role_approved']):raise HTTPException(403,'Недостаточно прав: требуется владелец Fenix_Dinero')
  return u
 def require_staff_action(req):
  u=require(req,staff=True)
