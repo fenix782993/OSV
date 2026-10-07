@@ -5,7 +5,7 @@
 <meta name="theme-color" content="#07111f"><title>ОСВ — COMMAND PORTAL</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Oswald:wght@500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/style.css?v=20261006-blue7">
+<link rel="stylesheet" href="/static/style.css?v=20261007-command9">
 </head>
 <body class="auth-lock">
 <div class="ambient a1"></div><div class="ambient a2"></div><div class="grain"></div>
@@ -22,6 +22,7 @@
     <button class="nav-item staff-only" data-page="reviews"><i>✓</i><span>Проверка</span><em>07</em></button>
     <button class="nav-item staff-only" data-page="questions"><i>Q</i><span>Банк вопросов</span><em>08</em></button>
     <button class="nav-item staff-only" data-page="audit"><i>≡</i><span>Журнал</span><em>09</em></button>
+    <button class="nav-item staff-only" data-page="profile"><i>●</i><span>Профиль</span><em>10</em></button>
   </nav>
   <div class="sidebar-bottom">
     <div class="online"><i></i><div><b>СИСТЕМА ОНЛАЙН</b><small>Данные синхронизированы</small></div></div>
@@ -37,5 +38,5 @@
  <button data-page="home">⌂<small>Главная</small></button><button data-page="exam">✦<small>Аттест.</small></button><button data-page="requests">✓<small>Заявки</small></button><button data-page="roster">♙<small>Состав</small></button><button data-page="profile">●<small>Профиль</small></button>
 </div>
 <div class="modal" id="authModal"><div class="modal-card"><button class="close" id="authClose" aria-label="Закрыть">×</button><div class="eyebrow">SECURE ACCESS</div><h2 id="authTitle">ВХОД / РЕГИСТРАЦИЯ</h2><p class="muted" id="authHint">Авторизация открывает персональный кабинет и доступные разделы.</p><div class="tabs"><button class="tab active" data-tab="login">Войти</button><button class="tab" data-tab="register">Регистрация</button></div><form id="authForm"><label>Игровой ник<input id="nickname" required minlength="3" maxlength="32" placeholder="Fenix_Dinero"></label><label id="maskLabel" class="hidden">Маска / игровой ID<input id="mask" maxlength="32" placeholder="Например: 123456" inputmode="numeric" pattern="[0-9]+" required></label><label id="positionLabel" class="hidden">Желаемая должность<select id="position"><option>Стажёр</option><option>Инспектор</option><option>Старший инспектор</option><option>Инструктор</option><option>Заместитель начальника ОСВ</option><option>Начальник ОСВ</option></select></label><label>Пароль<input id="password" type="password" required minlength="6" placeholder="Минимум 6 символов"></label><button class="red-btn full" type="submit" id="authSubmit">ВОЙТИ</button><p id="authMsg" class="form-msg"></p></form></div></div>
-<script src="/static/app.js?v=20261006-blue7"></script>
+<script src="/static/app.js?v=20261007-command9"></script>
 </body></html>

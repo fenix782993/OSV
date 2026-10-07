@@ -8,7 +8,7 @@ ROOT=Path(__file__).resolve().parent; DB=Path(os.getenv("DB_PATH",str(ROOT/"osv.
 app=FastAPI(title="ОСВ — Аттестация",version="2.0.0")
 app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
 SECRET=os.getenv("APP_SECRET","change-this-secret-on-render").encode(); OWNER="Fenix_Dinero"; PASS_SCORE=28; QUESTION_COUNT=33; EXAM_LIMIT_SECONDS=30*60
-ROLES=["Начальник ОСВ","Заместитель начальника ОСВ","Стажёр","Старший инспектор","Инспектор","Инструктор"]
+ROLES=["Начальник ОСВ","Заместитель начальника ОСВ","Стажёр","Старший инспектор","Инспектор","Инструктор","Администратор"]
 RANKS=["Без звания","Полковник","Генерал"]
 QUESTION_BANK = [
 "На каком основании снимать маску с задержанного?",
@@ -89,9 +89,14 @@ def current(req):
 def require(req,staff=False,owner=False):
  u=current(req)
  if not u: raise HTTPException(401,'Войдите в аккаунт')
- if staff and (u['role'] not in ('Владелец','Инструктор','Начальник ОСВ','Заместитель начальника ОСВ') or (u['role']!='Владелец' and not u['role_approved'])):raise HTTPException(403,'Недостаточно прав или должность не подтверждена')
+ if staff and (u['role'] not in ('Владелец','Инструктор','Начальник ОСВ','Заместитель начальника ОСВ','Администратор') or (u['role']!='Владелец' and not u['role_approved'])):raise HTTPException(403,'Недостаточно прав или должность не подтверждена')
  if owner and u['role'] not in ('Владелец','Начальник ОСВ'):raise HTTPException(403,'Недостаточно прав: требуется владелец или начальник ОСВ')
  return u
+def require_staff_action(req):
+ u=require(req,staff=True)
+ if u['role']=='Администратор': raise HTTPException(403,'Администратор имеет доступ только на просмотр и контроль')
+ return u
+def is_admin(u): return u and u['role']=='Администратор'
 class Register(BaseModel): nickname:str=Field(min_length=3,max_length=32); mask:str=Field(min_length=1,max_length=32); position:str=Field(min_length=2,max_length=60); password:str=Field(min_length=6,max_length=100)
 class Login(BaseModel): nickname:str; password:str
 class QuestionIn(BaseModel): body:str=Field(min_length=3,max_length=700); options:list[str]; correct:int; points:int=Field(default=1,ge=1,le=1); active:bool=True
@@ -129,12 +134,13 @@ def banner():
  if not p.exists():raise HTTPException(404,'Баннер не загружен')
  return FileResponse(p,media_type='image/jpeg')
 @app.get('/api/health')
-def health():return {'status':'online','service':'OSV Attestation'}
+def health():
+ c=db(); users=c.execute('SELECT COUNT(*) FROM users').fetchone()[0]; c.close(); return {'status':'online','service':'OSV Attestation','database':'sqlite','users':users}
 def user_dict(u):return {'id':u['id'],'nickname':u['nickname'],'mask':u['mask'] if 'mask' in u.keys() else '','position':u['position'],'role':u['role'],'role_approved':bool(u['role_approved']),'role_requested':u['role_requested'],'last_login':u['last_login'],'rank':u['rank'] if 'rank' in u.keys() else 'Без звания','retake_required':bool(u['retake_required']) if 'retake_required' in u.keys() else False}
 @app.post('/api/register')
 def register(x:Register,response:Response):
  nick=x.nickname.strip(); mask=x.mask.strip(); role=x.position.strip()
- if role not in ROLES: raise HTTPException(400,'Выберите корректную должность')
+ if role not in ROLES or role=='Администратор': raise HTTPException(400,'Выберите корректную должность')
  if role=='Стажёр': role='Стажёр'
  if not mask.isdigit(): raise HTTPException(400,'Маска должна содержать только цифры')
  if role not in ROLES:raise HTTPException(400,'Выберите должность из списка')
@@ -163,8 +169,8 @@ def me(req:Request):
  if not u:return {'user':None}
  c=db();now=int(time.time());c.execute('UPDATE users SET last_login=COALESCE(last_login,?) WHERE id=?',(now,u['id']));u=c.execute('SELECT * FROM users WHERE id=?',(u['id'],)).fetchone();req_status=c.execute("SELECT status,created,reviewed FROM exam_requests WHERE user_id=? ORDER BY id DESC LIMIT 1",(u['id'],)).fetchone();attempt=c.execute("SELECT id,started,finished,score,total,passed,status FROM attempts WHERE user_id=? ORDER BY id DESC LIMIT 1",(u['id'],)).fetchone();c.close();return {'user':user_dict(u),'exam_request':dict(req_status) if req_status else None,'attempt':dict(attempt) if attempt else None}
 @app.get('/api/roster')
-def roster():
- c=db();rows=c.execute("SELECT id,nickname,mask,position,role,rank,role_approved,created FROM users WHERE role_approved=1 ORDER BY CASE role WHEN 'Владелец' THEN 0 WHEN 'Начальник ОСВ' THEN 1 WHEN 'Заместитель начальника ОСВ' THEN 2 WHEN 'Старший инспектор' THEN 3 WHEN 'Инспектор' THEN 4 WHEN 'Инструктор' THEN 5 ELSE 6 END,nickname COLLATE NOCASE").fetchall();c.close();return [dict(r) for r in rows]
+def roster(req:Request):
+ u=require(req);c=db();rows=c.execute("SELECT id,nickname,mask,position,role,rank,role_approved,created,last_login,role_requested,retake_required,(SELECT COUNT(*) FROM attempts a WHERE a.user_id=users.id) attempts_count,(SELECT score FROM attempts a WHERE a.user_id=users.id ORDER BY a.id DESC LIMIT 1) last_score,(SELECT total FROM attempts a WHERE a.user_id=users.id ORDER BY a.id DESC LIMIT 1) last_total,(SELECT passed FROM attempts a WHERE a.user_id=users.id ORDER BY a.id DESC LIMIT 1) last_passed,(SELECT status FROM attempts a WHERE a.user_id=users.id ORDER BY a.id DESC LIMIT 1) last_attempt_status FROM users WHERE role_approved=1 ORDER BY CASE role WHEN 'Владелец' THEN 0 WHEN 'Начальник ОСВ' THEN 1 WHEN 'Заместитель начальника ОСВ' THEN 2 WHEN 'Администратор' THEN 3 WHEN 'Старший инспектор' THEN 4 WHEN 'Инспектор' THEN 5 WHEN 'Инструктор' THEN 6 ELSE 7 END,nickname COLLATE NOCASE").fetchall();c.close();return [dict(r) for r in rows]
 @app.post('/api/exam/request')
 def exam_request(req:Request):
  u=require(req)
@@ -240,7 +246,7 @@ def submit(x:Answers,req:Request):
  c.commit();c.close();return {'ok':True,'status':'pending_review','message':'Ответы отправлены инструктору на проверку'}
 @app.get('/api/admin/reviews')
 def reviews(req:Request):
- actor=require(req,staff=True);c=db();rows=c.execute("SELECT a.id,a.user_id,a.created,a.started,a.finished,u.nickname,u.role FROM attempts a JOIN users u ON u.id=a.user_id WHERE a.status='pending_review' ORDER BY a.finished").fetchall();c.close();return [dict(r) for r in rows]
+ require(req,staff=True);c=db();rows=c.execute("SELECT a.id,a.user_id,a.created,a.started,a.finished,u.nickname,u.role FROM attempts a JOIN users u ON u.id=a.user_id WHERE a.status='pending_review' ORDER BY a.finished").fetchall();c.close();return [dict(r) for r in rows]
 @app.get('/api/admin/reviews/{aid}')
 def review_detail(aid:int,req:Request):
  require(req,staff=True);c=db();a=c.execute("SELECT a.*,u.nickname,u.role FROM attempts a JOIN users u ON u.id=a.user_id WHERE a.id=? AND a.status='pending_review'",(aid,)).fetchone()
@@ -248,14 +254,14 @@ def review_detail(aid:int,req:Request):
  rows=c.execute('SELECT question_id,body_snapshot,answer,mark,reviewed_by,reviewed_at FROM attempt_questions WHERE attempt_id=? ORDER BY rowid',(aid,)).fetchall();c.close();return {'attempt':dict(a),'answers':[dict(r) for r in rows]}
 @app.post('/api/admin/reviews/{aid}/{qid}/{mark}')
 def mark_answer(aid:int,qid:int,mark:int,req:Request):
- actor=require(req,staff=True)
+ actor=require_staff_action(req)
  if mark not in (0,1):raise HTTPException(400,'Отметка должна быть 0 или 1')
  c=db();a=c.execute("SELECT * FROM attempts WHERE id=? AND status='pending_review'",(aid,)).fetchone();q=c.execute('SELECT * FROM attempt_questions WHERE attempt_id=? AND question_id=?',(aid,qid)).fetchone()
  if not a or not q:c.close();raise HTTPException(404,'Ответ не найден')
  c.execute('UPDATE attempt_questions SET mark=?,reviewed_by=?,reviewed_at=? WHERE attempt_id=? AND question_id=?',(mark,actor['nickname'],int(time.time()),aid,qid));audit(c,actor,'Ответ аттестации проверен',f'Попытка №{aid}, вопрос {qid}: {"верно" if mark else "неверно"}');c.commit();c.close();return {'ok':True}
 @app.post('/api/admin/reviews/{aid}/finish')
 def finish_review(aid:int,req:Request):
- actor=require(req,staff=True);c=db();a=c.execute("SELECT * FROM attempts WHERE id=? AND status='pending_review'",(aid,)).fetchone()
+ actor=require_staff_action(req);c=db();a=c.execute("SELECT * FROM attempts WHERE id=? AND status='pending_review'",(aid,)).fetchone()
  if not a:c.close();raise HTTPException(404,'Работа не найдена')
  rows=c.execute('SELECT mark FROM attempt_questions WHERE attempt_id=?',(aid,)).fetchall()
  if len(rows)!=33 or any(r['mark'] is None for r in rows):c.close();raise HTTPException(400,'Проверьте все 33 ответа')
@@ -282,20 +288,20 @@ def list_admin_questions(req:Request):
 
 @app.post('/api/admin/questions')
 def add_question(x:QuestionIn,req:Request):
- require(req,staff=True);validate_question(x);c=db()
+ require_staff_action(req);validate_question(x);c=db()
  if c.execute('SELECT COUNT(*) FROM questions').fetchone()[0]>=5000:c.close();raise HTTPException(400,'Достигнут лимит базы вопросов')
  cur=c.execute('INSERT INTO questions(body,options,correct,points,active) VALUES(?,?,?,1,?)',(x.body.strip(),json.dumps(x.options,ensure_ascii=False),x.correct,int(x.active)));c.commit();qid=cur.lastrowid;c.close();return {'id':qid}
 @app.put('/api/admin/questions/{qid}')
 def edit_question(qid:int,x:QuestionIn,req:Request):
- require(req,staff=True);validate_question(x);c=db();cur=c.execute('UPDATE questions SET body=?,options=?,correct=?,points=1,active=? WHERE id=?',(x.body.strip(),json.dumps(x.options,ensure_ascii=False),x.correct,int(x.active),qid));c.commit();c.close()
+ require_staff_action(req);validate_question(x);c=db();cur=c.execute('UPDATE questions SET body=?,options=?,correct=?,points=1,active=? WHERE id=?',(x.body.strip(),json.dumps(x.options,ensure_ascii=False),x.correct,int(x.active),qid));c.commit();c.close()
  if not cur.rowcount:raise HTTPException(404,'Вопрос не найден')
  return {'ok':True}
 @app.delete('/api/admin/questions/{qid}')
 def delete_question(qid:int,req:Request):
- require(req,staff=True);c=db();c.execute('DELETE FROM questions WHERE id=?',(qid,));c.commit();c.close();return {'ok':True}
+ require_staff_action(req);c=db();c.execute('DELETE FROM questions WHERE id=?',(qid,));c.commit();c.close();return {'ok':True}
 @app.post('/api/admin/questions/bulk')
 def bulk_questions(payload:dict,req:Request):
- actor=require(req,staff=True);raw=payload.get('text','');items=payload.get('questions',[])
+ actor=require_staff_action(req);raw=payload.get('text','');items=payload.get('questions',[])
  if raw:
   items += [{'body':line.strip()} for line in raw.splitlines() if line.strip()]
  cleaned=[]
@@ -325,7 +331,7 @@ def admin_users(req:Request):
  FROM users u ORDER BY created DESC''').fetchall();c.close();return [dict(r) for r in rows]
 @app.get('/api/admin/role-requests')
 def role_requests(req:Request):
- require(req,owner=True);c=db();rows=c.execute("SELECT id,nickname,position,COALESCE(NULLIF(role_requested,''),position) AS role_requested,role,role_approved,created FROM users WHERE role_approved=0 AND nickname<>? ORDER BY created",(OWNER,)).fetchall();c.close();return [dict(r) for r in rows]
+ require(req,staff=True);c=db();rows=c.execute("SELECT id,nickname,position,COALESCE(NULLIF(role_requested,''),position) AS role_requested,role,role_approved,created FROM users WHERE role_approved=0 AND nickname<>? ORDER BY created",(OWNER,)).fetchall();c.close();return [dict(r) for r in rows]
 @app.post('/api/admin/role-requests/{uid}/{decision}')
 def decide_role(uid:int,decision:str,req:Request):
  actor=require(req,owner=True)
@@ -347,7 +353,7 @@ def admin_exam_requests(req:Request):
  require(req,staff=True);c=db();rows=c.execute("SELECT r.id,r.user_id,r.status,r.created,r.reviewed,r.reviewed_by,u.nickname,u.role FROM exam_requests r JOIN users u ON u.id=r.user_id ORDER BY CASE r.status WHEN 'pending' THEN 0 ELSE 1 END,r.created DESC").fetchall();c.close();return [dict(r) for r in rows]
 @app.post('/api/admin/exam-requests/{rid}/{decision}')
 def decide_exam(rid:int,decision:str,req:Request):
- actor=require(req,staff=True)
+ actor=require_staff_action(req)
  if decision not in ('approve','reject'):raise HTTPException(400,'Некорректное решение')
  c=db();r=c.execute('SELECT r.*,u.nickname,u.role_approved FROM exam_requests r JOIN users u ON u.id=r.user_id WHERE r.id=?',(rid,)).fetchone()
  if not r:c.close();raise HTTPException(404,'Заявка не найдена')
@@ -446,7 +452,7 @@ def chat_send(payload:dict,req:Request):
 @app.get('/api/dashboard')
 def dashboard(req:Request):
  u=require(req);c=db();now=int(time.time());
- staff=c.execute('SELECT COUNT(*) FROM users WHERE role_approved=1').fetchone()[0]
+ staff=c.execute("SELECT COUNT(*) FROM users WHERE role_approved=1 AND role<>'Администратор'").fetchone()[0]
  requests=c.execute("SELECT COUNT(*) FROM users WHERE role_approved=0 AND nickname<>?",(OWNER,)).fetchone()[0]
  reviews=c.execute("SELECT COUNT(*) FROM attempts WHERE status='pending_review'").fetchone()[0]
  orders=c.execute("SELECT COUNT(*) FROM personnel_notes WHERE kind IN ('Выговор','Поощрение')").fetchone()[0]
@@ -458,4 +464,4 @@ def results(req:Request):
  require(req,staff=True);c=db();rows=c.execute('SELECT a.*,u.nickname,u.position,u.role FROM attempts a JOIN users u ON u.id=a.user_id ORDER BY COALESCE(a.started,a.created) DESC LIMIT 500').fetchall();c.close();return [{'id':r['id'],'nickname':r['nickname'],'position':r['position'],'role':r['role'],'score':r['score'],'total':r['total'],'passed':bool(r['passed']),'created':r['created'],'started':r['started'],'finished':r['finished'],'status':r['status']} for r in rows]
 @app.get('/api/admin/audit')
 def audit_log(req:Request):
- require(req,owner=True);c=db();rows=c.execute('SELECT * FROM audit ORDER BY created DESC LIMIT 1000').fetchall();c.close();return [dict(r) for r in rows]
+ require(req,staff=True);c=db();rows=c.execute('SELECT * FROM audit ORDER BY created DESC LIMIT 1000').fetchall();c.close();return [dict(r) for r in rows]
