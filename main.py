@@ -151,7 +151,7 @@ def register(x:Register,response:Response):
   for manager in c.execute("SELECT id FROM users WHERE role IN ('Владелец','Начальник ОСВ','Заместитель начальника ОСВ') AND role_approved=1").fetchall():c.execute('INSERT INTO notifications(user_id,title,body,created) VALUES(?,?,?,?)',(manager['id'],'Новая регистрация',f'{nick} подал заявку на вступление',now))
   c.commit()
  except sqlite3.IntegrityError:c.close();raise HTTPException(409,'Такой игровой ник уже зарегистрирован')
- c.close();response.set_cookie('osv_session',token(uid),httponly=True,samesite='lax',secure=os.getenv('COOKIE_SECURE','0')=='1',max_age=1209600);return {'ok':True}
+ c.close();return {'ok':True,'user_id':uid,'message':'Регистрация успешна. Выполните вход.'}
 @app.post('/api/login')
 def login(x:Login,response:Response):
  c=db();u=c.execute('SELECT * FROM users WHERE nickname=?',(x.nickname.strip(),)).fetchone()
@@ -366,9 +366,9 @@ def set_role(uid:int,x:RoleIn,req:Request):
  if actor['role']!='Владелец' and x.role=='Начальник ОСВ':
   c=db();existing=c.execute('SELECT role FROM users WHERE id=? AND nickname<>?',(uid,OWNER)).fetchone();c.close()
   if not existing or existing['role']!='Начальник ОСВ':raise HTTPException(403,'Назначать начальника ОСВ может только Fenix_Dinero')
- c=db();cur=c.execute("UPDATE users SET role=?,role_requested=?,role_approved=1,rank=CASE WHEN ? IN ('Начальник ОСВ','Заместитель начальника ОСВ') THEN rank ELSE 'Без звания' END WHERE id=? AND nickname<>?",(x.role,x.role,x.role,uid,OWNER));u=c.execute('SELECT * FROM users WHERE id=?',(uid,)).fetchone()
+ old_role=u['role']; c=db();cur=c.execute("UPDATE users SET role=?,role_requested=?,role_approved=1,rank=CASE WHEN ? IN ('Начальник ОСВ','Заместитель начальника ОСВ') THEN rank ELSE 'Без звания' END WHERE id=? AND nickname<>?",(x.role,x.role,x.role,uid,OWNER));u=c.execute('SELECT * FROM users WHERE id=?',(uid,)).fetchone()
  if not cur.rowcount:c.close();raise HTTPException(404,'Пользователь не найден')
- c.execute('INSERT INTO user_history(user_id,actor,field,old_value,new_value,created) VALUES(?,?,?,?,?,?)',(uid,actor['nickname'],'Должность',u['role'],x.role,int(time.time()))); audit(c,actor,'Должность изменена',f"{u['nickname']} · {x.role}"); c.execute('INSERT INTO notifications(user_id,title,body,created) VALUES(?,?,?,?)',(uid,'Изменена должность',f'Новая должность: {x.role}',int(time.time()))); c.commit();c.close();return {'ok':True}
+ c.execute('INSERT INTO user_history(user_id,actor,field,old_value,new_value,created) VALUES(?,?,?,?,?,?)',(uid,actor['nickname'],'Должность',old_role,x.role,int(time.time()))); audit(c,actor,'Должность изменена',f"{u['nickname']} · {x.role}"); c.execute('INSERT INTO notifications(user_id,title,body,created) VALUES(?,?,?,?)',(uid,'Изменена должность',f'Новая должность: {x.role}',int(time.time()))); c.commit();c.close();return {'ok':True}
 @app.delete('/api/admin/exam-requests/{rid}')
 def delete_exam_request(rid:int,req:Request):
  actor=require(req,owner=True);c=db();r=c.execute('SELECT r.*,u.nickname FROM exam_requests r JOIN users u ON u.id=r.user_id WHERE r.id=?',(rid,)).fetchone()
@@ -389,6 +389,34 @@ def set_rank(uid:int,x:RoleIn,req:Request):
  if not u:c.close();raise HTTPException(404,'Пользователь не найден')
  if u['role'] not in ('Начальник ОСВ','Заместитель начальника ОСВ') and x.role!='Без звания':c.close();raise HTTPException(400,'Звание можно назначать только начальнику или заместителю ОСВ')
  c.execute('UPDATE users SET rank=? WHERE id=?',(x.role,uid));c.execute('INSERT INTO user_history(user_id,actor,field,old_value,new_value,created) VALUES(?,?,?,?,?,?)',(uid,actor['nickname'],'Звание',u['rank'],x.role,int(time.time())));audit(c,actor,'Звание изменено',f"{u['nickname']} · {x.role}");c.commit();c.close();return {'ok':True,'rank':x.role}
+class AdminToggle(BaseModel):
+ enabled: bool
+
+@app.get('/api/admin/administrators')
+def administrators(req:Request):
+ require(req,owner=True); c=db(); rows=c.execute("SELECT id,nickname,mask,rank,last_login,created FROM users WHERE role='Администратор' AND role_approved=1 ORDER BY nickname COLLATE NOCASE").fetchall(); c.close(); return [dict(r) for r in rows]
+
+@app.post('/api/admin/users/{uid}/admin')
+def toggle_admin(uid:int,x:AdminToggle,req:Request):
+ actor=require(req,owner=True)
+ c=db(); u=c.execute('SELECT * FROM users WHERE id=? AND nickname<>?',(uid,OWNER)).fetchone()
+ if not u: c.close(); raise HTTPException(404,'Пользователь не найден или защищённый аккаунт')
+ old=u['role']; new='Администратор' if x.enabled else ('Стажёр' if not u['role_approved'] else (u['role_requested'] or u['position'] or 'Инспектор'))
+ if x.enabled:
+  c.execute("UPDATE users SET role='Администратор',role_requested='Администратор',role_approved=1 WHERE id=?",(uid,))
+  event='Администратор назначен'
+  body='Вам выданы права администратора. Доступ доступен только для контроля и просмотра.'
+ else:
+  if old!='Администратор': c.close(); raise HTTPException(400,'Пользователь не является администратором')
+  if new=='Администратор': new='Инспектор'
+  c.execute("UPDATE users SET role=?,role_requested=? WHERE id=?",(new,new,uid))
+  event='Права администратора сняты'
+  body=f'Права администратора сняты. Текущая должность: {new}'
+ c.execute('INSERT INTO user_history(user_id,actor,field,old_value,new_value,created) VALUES(?,?,?,?,?,?)',(uid,actor['nickname'],'Администратор',old,new,int(time.time())))
+ audit(c,actor,event,f"{u['nickname']} · {old} → {new}")
+ c.execute('INSERT INTO notifications(user_id,title,body,created) VALUES(?,?,?,?)',(uid,event,body,int(time.time())))
+ c.commit(); c.close(); return {'ok':True,'role':new}
+
 @app.delete('/api/admin/users/{uid}')
 def delete_user(uid:int,req:Request):
  actor=require(req,owner=True);c=db();u=c.execute('SELECT * FROM users WHERE id=? AND nickname<>?',(uid,OWNER)).fetchone()
@@ -452,7 +480,7 @@ def chat_send(payload:dict,req:Request):
 @app.get('/api/dashboard')
 def dashboard(req:Request):
  u=require(req);c=db();now=int(time.time());
- staff=c.execute("SELECT COUNT(*) FROM users WHERE role_approved=1 AND role<>'Администратор'").fetchone()[0]
+ staff=c.execute("SELECT COUNT(*) FROM users WHERE role_approved=1").fetchone()[0]
  requests=c.execute("SELECT COUNT(*) FROM users WHERE role_approved=0 AND nickname<>?",(OWNER,)).fetchone()[0]
  reviews=c.execute("SELECT COUNT(*) FROM attempts WHERE status='pending_review'").fetchone()[0]
  orders=c.execute("SELECT COUNT(*) FROM personnel_notes WHERE kind IN ('Выговор','Поощрение')").fetchone()[0]
