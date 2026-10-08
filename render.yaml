@@ -13,6 +13,8 @@ services:
         generateValue: true
       - key: OWNER_PASSWORD
         sync: false
+      - key: DATABASE_URL
+        sync: false
       - key: DB_PATH
         value: /var/data/osv.db
       - key: COOKIE_SECURE

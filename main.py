@@ -1,10 +1,20 @@
-import os, sqlite3, hashlib, hmac, secrets, json, time, re
+import os, sqlite3, hashlib, hmac, secrets, json, time, re, csv, io, uuid
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+try:
+ import psycopg
+ from psycopg.rows import dict_row
+ from psycopg.errors import UniqueViolation
+except Exception:
+ psycopg = None
+ dict_row = None
+ class UniqueViolation(Exception): pass
 ROOT=Path(__file__).resolve().parent; DB=Path(os.getenv("DB_PATH",str(ROOT/"osv.db"))); DB.parent.mkdir(parents=True,exist_ok=True)
+DATABASE_URL=os.getenv("DATABASE_URL","").strip()
+USE_POSTGRES=bool(DATABASE_URL)
 app=FastAPI(title="ОСВ — Аттестация",version="2.0.0")
 app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
 SECRET=os.getenv("APP_SECRET","change-this-secret-on-render").encode(); OWNER="Fenix_Dinero"; PASS_SCORE=28; QUESTION_COUNT=33; EXAM_LIMIT_SECONDS=30*60
@@ -46,21 +56,115 @@ QUESTION_BANK = [
 "Кто подчиняется ОСВ?"
 ]
 
+PG_SCHEMA = """
+CREATE TABLE IF NOT EXISTS users(id BIGSERIAL PRIMARY KEY,nickname TEXT UNIQUE NOT NULL,mask TEXT NOT NULL DEFAULT '',position TEXT NOT NULL,password TEXT NOT NULL,role TEXT NOT NULL DEFAULT 'Стажёр',created BIGINT NOT NULL,role_approved INTEGER NOT NULL DEFAULT 0,last_login BIGINT,role_requested TEXT,rank TEXT NOT NULL DEFAULT 'Без звания',retake_required INTEGER NOT NULL DEFAULT 0,admin_prev_role TEXT,blocked INTEGER NOT NULL DEFAULT 0,block_reason TEXT,blocked_at BIGINT,blocked_by TEXT,avatar_url TEXT,archived INTEGER NOT NULL DEFAULT 0,archived_at BIGINT,archived_by TEXT);
+CREATE TABLE IF NOT EXISTS questions(id BIGSERIAL PRIMARY KEY,body TEXT NOT NULL,options TEXT NOT NULL,correct INTEGER NOT NULL,points INTEGER NOT NULL DEFAULT 1,active INTEGER NOT NULL DEFAULT 1);
+CREATE TABLE IF NOT EXISTS attempts(id BIGSERIAL PRIMARY KEY,user_id BIGINT NOT NULL REFERENCES users(id),score INTEGER NOT NULL DEFAULT 0,total INTEGER NOT NULL DEFAULT 33,passed INTEGER NOT NULL DEFAULT 0,answers TEXT NOT NULL DEFAULT '{}',created BIGINT NOT NULL,started BIGINT,finished BIGINT,status TEXT NOT NULL DEFAULT 'started');
+CREATE TABLE IF NOT EXISTS exam_requests(id BIGSERIAL PRIMARY KEY,user_id BIGINT NOT NULL REFERENCES users(id),status TEXT NOT NULL DEFAULT 'pending',created BIGINT NOT NULL,reviewed BIGINT,reviewed_by TEXT);
+CREATE TABLE IF NOT EXISTS audit(id BIGSERIAL PRIMARY KEY,user_id BIGINT,nickname TEXT NOT NULL,event TEXT NOT NULL,details TEXT NOT NULL DEFAULT '',created BIGINT NOT NULL);
+CREATE TABLE IF NOT EXISTS attempt_questions(attempt_id BIGINT NOT NULL REFERENCES attempts(id),question_id BIGINT NOT NULL,body_snapshot TEXT NOT NULL,answer TEXT NOT NULL DEFAULT '',mark INTEGER,reviewed_by TEXT,reviewed_at BIGINT,position INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(attempt_id,question_id));
+CREATE TABLE IF NOT EXISTS notifications(id BIGSERIAL PRIMARY KEY,user_id BIGINT NOT NULL REFERENCES users(id),title TEXT NOT NULL,body TEXT NOT NULL,created BIGINT NOT NULL,seen INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS personnel_notes(id BIGSERIAL PRIMARY KEY,user_id BIGINT NOT NULL REFERENCES users(id),kind TEXT NOT NULL,body TEXT NOT NULL,actor TEXT NOT NULL,created BIGINT NOT NULL);
+CREATE TABLE IF NOT EXISTS chat_messages(id BIGSERIAL PRIMARY KEY,room TEXT NOT NULL,sender_id BIGINT NOT NULL REFERENCES users(id),recipient_id BIGINT,body TEXT NOT NULL,created BIGINT NOT NULL);
+CREATE TABLE IF NOT EXISTS user_history(id BIGSERIAL PRIMARY KEY,user_id BIGINT NOT NULL REFERENCES users(id),actor TEXT NOT NULL,field TEXT NOT NULL,old_value TEXT,new_value TEXT,created BIGINT NOT NULL);
+CREATE TABLE IF NOT EXISTS user_permissions(user_id BIGINT PRIMARY KEY REFERENCES users(id),permissions TEXT NOT NULL DEFAULT '[]');
+CREATE TABLE IF NOT EXISTS app_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS training_attempts(id BIGSERIAL PRIMARY KEY,user_id BIGINT NOT NULL REFERENCES users(id),questions TEXT NOT NULL,answers TEXT NOT NULL DEFAULT '{}',score INTEGER NOT NULL DEFAULT 0,total INTEGER NOT NULL DEFAULT 10,created BIGINT NOT NULL,finished BIGINT);
+CREATE TABLE IF NOT EXISTS announcements(id BIGSERIAL PRIMARY KEY,title TEXT NOT NULL,body TEXT NOT NULL,audience TEXT NOT NULL,actor TEXT NOT NULL,created BIGINT NOT NULL);
+CREATE TABLE IF NOT EXISTS calendar_events(id BIGSERIAL PRIMARY KEY,title TEXT NOT NULL,body TEXT NOT NULL,starts BIGINT NOT NULL,created BIGINT NOT NULL,actor TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS awards(id BIGSERIAL PRIMARY KEY,user_id BIGINT NOT NULL REFERENCES users(id),title TEXT NOT NULL,body TEXT NOT NULL,actor TEXT NOT NULL,created BIGINT NOT NULL);
+CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,user_id BIGINT NOT NULL REFERENCES users(id),created BIGINT NOT NULL,last_seen BIGINT NOT NULL,ip TEXT,user_agent TEXT,revoked INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS archived_users(id BIGSERIAL PRIMARY KEY,original_user_id BIGINT,nickname TEXT NOT NULL,mask TEXT,role TEXT,rank TEXT,reason TEXT,actor TEXT,created BIGINT NOT NULL,data_json TEXT NOT NULL);
+"""
+
+def _qmark(sql):
+    return sql.replace('?', '%s') if USE_POSTGRES else sql
+
+class PGConn:
+    def __init__(self,c): self.c=c
+    def execute(self,sql,params=()): return self.c.execute(_qmark(sql),params)
+    def executescript(self,sql):
+        for stmt in [x.strip() for x in sql.split(';') if x.strip()]: self.c.execute(stmt)
+    def commit(self): self.c.commit()
+    def rollback(self): self.c.rollback()
+    def close(self): self.c.close()
+
+def migrate_sqlite_to_postgres(pg):
+    if not DB.exists(): return False
+    try:
+        marker=pg.execute("SELECT value FROM app_meta WHERE key='neon_migrated_from_sqlite_v1'").fetchone()
+        if marker: return False
+        sc=sqlite3.connect(DB); sc.row_factory=sqlite3.Row
+        tables=['users','questions','attempts','exam_requests','audit','attempt_questions','notifications','personnel_notes','chat_messages','user_history','user_permissions','app_meta','training_attempts','announcements','calendar_events','awards','sessions','archived_users']
+        # Only migrate when the target is empty; never overwrite a live Neon database.
+        existing=pg.execute('SELECT COUNT(*) AS n FROM users').fetchone()['n']
+        if existing: pg.execute("INSERT INTO app_meta(key,value) VALUES('neon_migrated_from_sqlite_v1','skipped_target_not_empty') ON CONFLICT(key) DO NOTHING"); pg.commit(); sc.close(); return False
+        for table in tables:
+            try: cols=[r['name'] for r in sc.execute(f'PRAGMA table_info({table})').fetchall()]
+            except Exception: continue
+            if not cols: continue
+            pgcols={r['column_name'] for r in pg.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=%s",(table,)).fetchall()}
+            common=[x for x in cols if x in pgcols]
+            if not common: continue
+            rows=sc.execute(f'SELECT {",".join(common)} FROM {table}').fetchall()
+            if not rows: continue
+            placeholders=','.join(['%s']*len(common)); sql=f'INSERT INTO {table} ({",".join(common)}) VALUES ({placeholders}) ON CONFLICT DO NOTHING'
+            for row in rows: pg.execute(sql,tuple(row[x] for x in common))
+        pg.execute("INSERT INTO app_meta(key,value) VALUES('neon_migrated_from_sqlite_v1','done') ON CONFLICT(key) DO NOTHING")
+        # Keep identity sequences above copied IDs.
+        for table in ['users','questions','attempts','exam_requests','audit','notifications','personnel_notes','chat_messages','user_history','training_attempts','announcements','calendar_events','awards','archived_users']:
+            try: pg.execute(f"SELECT setval(pg_get_serial_sequence('{table}','id'), COALESCE((SELECT MAX(id) FROM {table}),0)+1, false)")
+            except Exception: pass
+        pg.commit(); sc.close(); return True
+    except Exception:
+        try: pg.rollback()
+        except Exception: pass
+        try: sc.close()
+        except Exception: pass
+        raise
+
 def db():
- c=sqlite3.connect(DB,timeout=20); c.row_factory=sqlite3.Row; c.execute("PRAGMA foreign_keys=ON")
- c.executescript("CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY AUTOINCREMENT,nickname TEXT UNIQUE NOT NULL,mask TEXT NOT NULL DEFAULT '',position TEXT NOT NULL,password TEXT NOT NULL,role TEXT NOT NULL DEFAULT 'Стажёр',created INTEGER NOT NULL,role_approved INTEGER NOT NULL DEFAULT 0,last_login INTEGER,role_requested TEXT,rank TEXT NOT NULL DEFAULT 'Без звания',retake_required INTEGER NOT NULL DEFAULT 0,admin_prev_role TEXT); CREATE TABLE IF NOT EXISTS questions(id INTEGER PRIMARY KEY AUTOINCREMENT,body TEXT NOT NULL,options TEXT NOT NULL,correct INTEGER NOT NULL,points INTEGER NOT NULL DEFAULT 1,active INTEGER NOT NULL DEFAULT 1); CREATE TABLE IF NOT EXISTS attempts(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,score INTEGER NOT NULL DEFAULT 0,total INTEGER NOT NULL DEFAULT 33,passed INTEGER NOT NULL DEFAULT 0,answers TEXT NOT NULL DEFAULT '{}',created INTEGER NOT NULL,started INTEGER,finished INTEGER,status TEXT NOT NULL DEFAULT 'started',FOREIGN KEY(user_id) REFERENCES users(id)); CREATE TABLE IF NOT EXISTS exam_requests(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'pending',created INTEGER NOT NULL,reviewed INTEGER,reviewed_by TEXT,FOREIGN KEY(user_id) REFERENCES users(id)); CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER,nickname TEXT NOT NULL,event TEXT NOT NULL,details TEXT NOT NULL DEFAULT '',created INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS attempt_questions(attempt_id INTEGER NOT NULL,question_id INTEGER NOT NULL,body_snapshot TEXT NOT NULL,answer TEXT NOT NULL DEFAULT '',mark INTEGER,reviewed_by TEXT,reviewed_at INTEGER,PRIMARY KEY(attempt_id,question_id),FOREIGN KEY(attempt_id) REFERENCES attempts(id)); CREATE TABLE IF NOT EXISTS notifications(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,title TEXT NOT NULL,body TEXT NOT NULL,created INTEGER NOT NULL,seen INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS personnel_notes(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,kind TEXT NOT NULL,body TEXT NOT NULL,actor TEXT NOT NULL,created INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS chat_messages(id INTEGER PRIMARY KEY AUTOINCREMENT,room TEXT NOT NULL,sender_id INTEGER NOT NULL,recipient_id INTEGER,body TEXT NOT NULL,created INTEGER NOT NULL,FOREIGN KEY(sender_id) REFERENCES users(id),FOREIGN KEY(recipient_id) REFERENCES users(id)); CREATE TABLE IF NOT EXISTS user_history(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,actor TEXT NOT NULL,field TEXT NOT NULL,old_value TEXT,new_value TEXT,created INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS user_permissions(user_id INTEGER PRIMARY KEY,permissions TEXT NOT NULL DEFAULT '[]'); CREATE TABLE IF NOT EXISTS app_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);")
- # additive migrations for existing databases
- cols={r['name'] for r in c.execute('PRAGMA table_info(users)')}
- for name,ddl in [('role_approved','INTEGER NOT NULL DEFAULT 0'),('last_login','INTEGER'),('role_requested','TEXT'),('rank',"TEXT NOT NULL DEFAULT 'Без звания'"),('retake_required','INTEGER NOT NULL DEFAULT 0'),('admin_prev_role','TEXT')]:
-  if name not in cols: c.execute(f'ALTER TABLE users ADD COLUMN {name} {ddl}')
- c.execute("UPDATE users SET role_requested=position WHERE role_approved=0 AND (role_requested IS NULL OR role_requested='') AND position IN ('Начальник ОСВ','Заместитель начальника ОСВ','Инструктор','Старший инспектор','Инспектор','Стажёр')")
- acols={r['name'] for r in c.execute('PRAGMA table_info(attempts)')}
- for name,ddl in [('started','INTEGER'),('finished','INTEGER'),('status',"TEXT NOT NULL DEFAULT 'started'")]:
-  if name not in acols: c.execute(f'ALTER TABLE attempts ADD COLUMN {name} {ddl}')
- c.commit(); return c
+    if USE_POSTGRES:
+        if psycopg is None: raise RuntimeError('Для DATABASE_URL установите psycopg[binary]')
+        c=psycopg.connect(DATABASE_URL,row_factory=dict_row,connect_timeout=10)
+        c.execute("SET TIME ZONE 'UTC'")
+        for stmt in [x.strip() for x in PG_SCHEMA.split(';') if x.strip()]: c.execute(stmt)
+        for sql in [
+            'ALTER TABLE users ADD COLUMN IF NOT EXISTS blocked INTEGER NOT NULL DEFAULT 0',
+            'ALTER TABLE users ADD COLUMN IF NOT EXISTS block_reason TEXT',
+            'ALTER TABLE users ADD COLUMN IF NOT EXISTS blocked_at BIGINT',
+            'ALTER TABLE users ADD COLUMN IF NOT EXISTS blocked_by TEXT',
+            'ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT',
+            'ALTER TABLE users ADD COLUMN IF NOT EXISTS archived INTEGER NOT NULL DEFAULT 0',
+            'ALTER TABLE users ADD COLUMN IF NOT EXISTS archived_at BIGINT',
+            'ALTER TABLE users ADD COLUMN IF NOT EXISTS archived_by TEXT',
+            'ALTER TABLE attempt_questions ADD COLUMN IF NOT EXISTS position INTEGER NOT NULL DEFAULT 0']:
+            c.execute(sql)
+        migrate_sqlite_to_postgres(c)
+        c.commit(); return PGConn(c)
+    c=sqlite3.connect(DB,timeout=20); c.row_factory=sqlite3.Row; c.execute('PRAGMA foreign_keys=ON')
+    c.executescript("""CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY AUTOINCREMENT,nickname TEXT UNIQUE NOT NULL,mask TEXT NOT NULL DEFAULT '',position TEXT NOT NULL,password TEXT NOT NULL,role TEXT NOT NULL DEFAULT 'Стажёр',created INTEGER NOT NULL,role_approved INTEGER NOT NULL DEFAULT 0,last_login INTEGER,role_requested TEXT,rank TEXT NOT NULL DEFAULT 'Без звания',retake_required INTEGER NOT NULL DEFAULT 0,admin_prev_role TEXT,blocked INTEGER NOT NULL DEFAULT 0,block_reason TEXT,blocked_at INTEGER,blocked_by TEXT,avatar_url TEXT,archived INTEGER NOT NULL DEFAULT 0,archived_at INTEGER,archived_by TEXT); CREATE TABLE IF NOT EXISTS questions(id INTEGER PRIMARY KEY AUTOINCREMENT,body TEXT NOT NULL,options TEXT NOT NULL,correct INTEGER NOT NULL,points INTEGER NOT NULL DEFAULT 1,active INTEGER NOT NULL DEFAULT 1); CREATE TABLE IF NOT EXISTS attempts(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,score INTEGER NOT NULL DEFAULT 0,total INTEGER NOT NULL DEFAULT 33,passed INTEGER NOT NULL DEFAULT 0,answers TEXT NOT NULL DEFAULT '{}',created INTEGER NOT NULL,started INTEGER,finished INTEGER,status TEXT NOT NULL DEFAULT 'started'); CREATE TABLE IF NOT EXISTS exam_requests(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'pending',created INTEGER NOT NULL,reviewed INTEGER,reviewed_by TEXT); CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER,nickname TEXT NOT NULL,event TEXT NOT NULL,details TEXT NOT NULL DEFAULT '',created INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS attempt_questions(attempt_id INTEGER NOT NULL,question_id INTEGER NOT NULL,body_snapshot TEXT NOT NULL,answer TEXT NOT NULL DEFAULT '',mark INTEGER,reviewed_by TEXT,reviewed_at INTEGER,position INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(attempt_id,question_id)); CREATE TABLE IF NOT EXISTS notifications(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,title TEXT NOT NULL,body TEXT NOT NULL,created INTEGER NOT NULL,seen INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS personnel_notes(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,kind TEXT NOT NULL,body TEXT NOT NULL,actor TEXT NOT NULL,created INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS chat_messages(id INTEGER PRIMARY KEY AUTOINCREMENT,room TEXT NOT NULL,sender_id INTEGER NOT NULL,recipient_id INTEGER,body TEXT NOT NULL,created INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS user_history(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,actor TEXT NOT NULL,field TEXT NOT NULL,old_value TEXT,new_value TEXT,created INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS user_permissions(user_id INTEGER PRIMARY KEY,permissions TEXT NOT NULL DEFAULT '[]'); CREATE TABLE IF NOT EXISTS app_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS training_attempts(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,questions TEXT NOT NULL,answers TEXT NOT NULL DEFAULT '{}',score INTEGER NOT NULL DEFAULT 0,total INTEGER NOT NULL DEFAULT 10,created INTEGER NOT NULL,finished INTEGER); CREATE TABLE IF NOT EXISTS announcements(id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,body TEXT NOT NULL,audience TEXT NOT NULL,actor TEXT NOT NULL,created INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS calendar_events(id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,body TEXT NOT NULL,starts INTEGER NOT NULL,created INTEGER NOT NULL,actor TEXT NOT NULL); CREATE TABLE IF NOT EXISTS awards(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,title TEXT NOT NULL,body TEXT NOT NULL,actor TEXT NOT NULL,created INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,user_id INTEGER NOT NULL,created INTEGER NOT NULL,last_seen INTEGER NOT NULL,ip TEXT,user_agent TEXT,revoked INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS archived_users(id INTEGER PRIMARY KEY AUTOINCREMENT,original_user_id INTEGER,nickname TEXT NOT NULL,mask TEXT,role TEXT,rank TEXT,reason TEXT,actor TEXT,created INTEGER NOT NULL,data_json TEXT NOT NULL);""")
+    cols={r['name'] for r in c.execute('PRAGMA table_info(users)')}
+    for name,ddl in [('role_approved','INTEGER NOT NULL DEFAULT 0'),('last_login','INTEGER'),('role_requested','TEXT'),('rank',"TEXT NOT NULL DEFAULT 'Без звания'"),('retake_required','INTEGER NOT NULL DEFAULT 0'),('admin_prev_role','TEXT'),('blocked','INTEGER NOT NULL DEFAULT 0'),('block_reason','TEXT'),('blocked_at','INTEGER'),('blocked_by','TEXT'),('avatar_url','TEXT'),('archived','INTEGER NOT NULL DEFAULT 0'),('archived_at','INTEGER'),('archived_by','TEXT')]:
+        if name not in cols: c.execute(f'ALTER TABLE users ADD COLUMN {name} {ddl}')
+    acols={r['name'] for r in c.execute('PRAGMA table_info(attempts)')}
+    for name,ddl in [('started','INTEGER'),('finished','INTEGER'),('status',"TEXT NOT NULL DEFAULT 'started'")]:
+        if name not in acols: c.execute(f'ALTER TABLE attempts ADD COLUMN {name} {ddl}')
+    qcols={r['name'] for r in c.execute('PRAGMA table_info(attempt_questions)')}
+    if 'position' not in qcols: c.execute('ALTER TABLE attempt_questions ADD COLUMN position INTEGER NOT NULL DEFAULT 0')
+    c.commit(); return c
+
+def inserted_id(c,sql,params=()):
+    if USE_POSTGRES:
+        row=c.execute(sql+' RETURNING id',params).fetchone(); return int(row['id'])
+    return c.execute(sql,params).lastrowid
+
 def audit(c,u,event,details=''):
  c.execute('INSERT INTO audit(user_id,nickname,event,details,created) VALUES(?,?,?,?,?)',(u['id'] if u else None,u['nickname'] if u else 'system',event,details,int(time.time())))
 def delete_user_data(c, uid):
+ c.execute('DELETE FROM training_attempts WHERE user_id=?',(uid,))
+ c.execute('DELETE FROM awards WHERE user_id=?',(uid,))
+ c.execute('DELETE FROM sessions WHERE user_id=?',(uid,))
  c.execute('DELETE FROM exam_requests WHERE user_id=?',(uid,))
  c.execute('DELETE FROM attempt_questions WHERE attempt_id IN (SELECT id FROM attempts WHERE user_id=?)',(uid,))
  c.execute('DELETE FROM notifications WHERE user_id=?',(uid,))
@@ -84,7 +188,7 @@ def current(req):
   if not hmac.compare_digest(sig,exp_sig):return None
   uid,exp=raw.split(':');
   if int(exp)<time.time():return None
-  c=db(); u=c.execute('SELECT * FROM users WHERE id=?',(int(uid),)).fetchone(); c.close(); return u
+  c=db(); u=c.execute('SELECT * FROM users WHERE id=? AND COALESCE(blocked,0)=0 AND COALESCE(archived,0)=0',(int(uid),)).fetchone(); c.close(); return u
  except Exception:return None
 def require(req,staff=False,owner=False):
  u=current(req)
@@ -135,10 +239,11 @@ def banner():
  return FileResponse(p,media_type='image/jpeg')
 @app.get('/api/health')
 def health():
- c=db(); users=c.execute('SELECT COUNT(*) FROM users').fetchone()[0]; c.close(); return {'status':'online','service':'OSV Attestation','database':'sqlite','users':users}
+ c=db(); users=c.execute('SELECT COUNT(*) FROM users').fetchone()[0]; c.close(); return {'status':'online','service':'OSV Attestation','database':'postgresql' if USE_POSTGRES else 'sqlite','users':users}
 def user_dict(u):return {'id':u['id'],'nickname':u['nickname'],'mask':u['mask'] if 'mask' in u.keys() else '','position':u['position'],'role':u['role'],'role_approved':bool(u['role_approved']),'role_requested':u['role_requested'],'last_login':u['last_login'],'rank':u['rank'] if 'rank' in u.keys() else 'Без звания','retake_required':bool(u['retake_required']) if 'retake_required' in u.keys() else False}
 @app.post('/api/register')
-def register(x:Register,response:Response):
+def register(x:Register,response:Response,req:Request):
+ if current(req): raise HTTPException(409,'Сначала выйдите из текущего аккаунта')
  nick=x.nickname.strip(); mask=x.mask.strip(); role=x.position.strip()
  if role not in ROLES or role=='Администратор': raise HTTPException(400,'Выберите корректную должность')
  if role=='Стажёр': role='Стажёр'
@@ -146,15 +251,16 @@ def register(x:Register,response:Response):
  if role not in ROLES:raise HTTPException(400,'Выберите должность из списка')
  c=db()
  try:
-  cur=c.execute("INSERT INTO users(nickname,mask,position,password,role,created,role_approved,role_requested) VALUES(?,?,?,?,?,?,0,?)",(nick,x.mask.strip(),role,pw_hash(x.password),'Стажёр',int(time.time()),role)); uid=cur.lastrowid
+  uid=inserted_id(c,"INSERT INTO users(nickname,mask,position,password,role,created,role_approved,role_requested) VALUES(?,?,?,?,?,?,0,?)",(nick,x.mask.strip(),role,pw_hash(x.password),'Стажёр',int(time.time()),role))
   u=c.execute('SELECT * FROM users WHERE id=?',(uid,)).fetchone();audit(c,u,'Регистрация',f'Заявлена должность: {role}');c.execute('INSERT INTO user_history(user_id,actor,field,old_value,new_value,created) VALUES(?,?,?,?,?,?)',(uid,nick,'Заявленная должность','',role,int(time.time())));now=int(time.time());
   for manager in c.execute("SELECT id FROM users WHERE role IN ('Владелец','Начальник ОСВ','Заместитель начальника ОСВ') AND role_approved=1").fetchall():c.execute('INSERT INTO notifications(user_id,title,body,created) VALUES(?,?,?,?)',(manager['id'],'Новая регистрация',f'{nick} подал заявку на вступление',now))
   c.commit()
- except sqlite3.IntegrityError:c.close();raise HTTPException(409,'Такой игровой ник уже зарегистрирован')
+ except (sqlite3.IntegrityError, UniqueViolation):c.close();raise HTTPException(409,'Такой игровой ник уже зарегистрирован')
  c.close();return {'ok':True,'user_id':uid,'message':'Регистрация успешна. Выполните вход.'}
 @app.post('/api/login')
 def login(x:Login,response:Response):
  c=db();u=c.execute('SELECT * FROM users WHERE nickname=?',(x.nickname.strip(),)).fetchone()
+ if u and (u['blocked'] or u['archived']): c.close(); raise HTTPException(403,'Доступ к аккаунту ограничен')
  if not u or not check_pw(x.password,u['password']):c.close();raise HTTPException(401,'Неверный ник или пароль')
  now=int(time.time());c.execute('UPDATE users SET last_login=? WHERE id=?',(now,u['id']));u=c.execute('SELECT * FROM users WHERE id=?',(u['id'],)).fetchone();audit(c,u,'Вход на сайт');c.commit();c.close();response.set_cookie('osv_session',token(u['id']),httponly=True,samesite='lax',secure=os.getenv('COOKIE_SECURE','0')=='1',max_age=1209600);return {'ok':True}
 @app.post('/api/logout')
@@ -170,7 +276,7 @@ def me(req:Request):
  c=db();now=int(time.time());c.execute('UPDATE users SET last_login=COALESCE(last_login,?) WHERE id=?',(now,u['id']));u=c.execute('SELECT * FROM users WHERE id=?',(u['id'],)).fetchone();req_status=c.execute("SELECT status,created,reviewed FROM exam_requests WHERE user_id=? ORDER BY id DESC LIMIT 1",(u['id'],)).fetchone();attempt=c.execute("SELECT id,started,finished,score,total,passed,status FROM attempts WHERE user_id=? ORDER BY id DESC LIMIT 1",(u['id'],)).fetchone();c.close();return {'user':user_dict(u),'exam_request':dict(req_status) if req_status else None,'attempt':dict(attempt) if attempt else None}
 @app.get('/api/roster')
 def roster(req:Request):
- u=require(req);c=db();rows=c.execute("SELECT id,nickname,mask,position,role,rank,role_approved,created,last_login,role_requested,retake_required,(SELECT COUNT(*) FROM attempts a WHERE a.user_id=users.id) attempts_count,(SELECT score FROM attempts a WHERE a.user_id=users.id ORDER BY a.id DESC LIMIT 1) last_score,(SELECT total FROM attempts a WHERE a.user_id=users.id ORDER BY a.id DESC LIMIT 1) last_total,(SELECT passed FROM attempts a WHERE a.user_id=users.id ORDER BY a.id DESC LIMIT 1) last_passed,(SELECT status FROM attempts a WHERE a.user_id=users.id ORDER BY a.id DESC LIMIT 1) last_attempt_status FROM users WHERE role_approved=1 ORDER BY CASE role WHEN 'Владелец' THEN 0 WHEN 'Начальник ОСВ' THEN 1 WHEN 'Заместитель начальника ОСВ' THEN 2 WHEN 'Администратор' THEN 3 WHEN 'Старший инспектор' THEN 4 WHEN 'Инспектор' THEN 5 WHEN 'Инструктор' THEN 6 ELSE 7 END,nickname COLLATE NOCASE").fetchall();c.close();return [dict(r) for r in rows]
+ u=require(req);c=db();rows=c.execute("SELECT id,nickname,mask,position,role,rank,role_approved,created,last_login,role_requested,retake_required,(SELECT COUNT(*) FROM attempts a WHERE a.user_id=users.id) attempts_count,(SELECT score FROM attempts a WHERE a.user_id=users.id ORDER BY a.id DESC LIMIT 1) last_score,(SELECT total FROM attempts a WHERE a.user_id=users.id ORDER BY a.id DESC LIMIT 1) last_total,(SELECT passed FROM attempts a WHERE a.user_id=users.id ORDER BY a.id DESC LIMIT 1) last_passed,(SELECT status FROM attempts a WHERE a.user_id=users.id ORDER BY a.id DESC LIMIT 1) last_attempt_status FROM users WHERE role_approved=1 ORDER BY CASE role WHEN 'Владелец' THEN 0 WHEN 'Начальник ОСВ' THEN 1 WHEN 'Заместитель начальника ОСВ' THEN 2 WHEN 'Администратор' THEN 3 WHEN 'Старший инспектор' THEN 4 WHEN 'Инспектор' THEN 5 WHEN 'Инструктор' THEN 6 ELSE 7 END,LOWER(nickname)").fetchall();c.close();return [dict(r) for r in rows]
 @app.post('/api/exam/request')
 def exam_request(req:Request):
  u=require(req)
@@ -178,8 +284,8 @@ def exam_request(req:Request):
  if u['role']!='Стажёр':return {'ok':True,'status':'not_required'}
  c=db();old=c.execute("SELECT * FROM exam_requests WHERE user_id=? AND status='pending' ORDER BY id DESC LIMIT 1",(u['id'],)).fetchone()
  if old:c.close();return {'ok':True,'status':'pending'}
- cur=c.execute("INSERT INTO exam_requests(user_id,status,created) VALUES(?,'pending',?)",(u['id'],int(time.time())));now=int(time.time());audit(c,u,'Заявка на аттестацию подана',f'Заявка №{cur.lastrowid}');
- for reviewer in c.execute("SELECT id FROM users WHERE role IN ('Владелец','Начальник ОСВ','Заместитель начальника ОСВ','Инструктор') AND role_approved=1").fetchall():c.execute('INSERT INTO notifications(user_id,title,body,created) VALUES(?,?,?,?)',(reviewer['id'],'Новая заявка на аттестацию',f'{u["nickname"]} подал заявку №{cur.lastrowid}',now))
+ rid=inserted_id(c,"INSERT INTO exam_requests(user_id,status,created) VALUES(?,'pending',?)",(u['id'],int(time.time())));now=int(time.time());audit(c,u,'Заявка на аттестацию подана',f'Заявка №{rid}');
+ for reviewer in c.execute("SELECT id FROM users WHERE role IN ('Владелец','Начальник ОСВ','Заместитель начальника ОСВ','Инструктор') AND role_approved=1").fetchall():c.execute('INSERT INTO notifications(user_id,title,body,created) VALUES(?,?,?,?)',(reviewer['id'],'Новая заявка на аттестацию',f'{u["nickname"]} подал заявку №{rid}',now))
  c.commit();c.close();return {'ok':True,'status':'pending'}
 @app.post('/api/exam/start')
 def start_exam(req: Request):
@@ -200,10 +306,9 @@ def start_exam(req: Request):
   qs = c.execute("SELECT id,body,options FROM questions WHERE active=1 ORDER BY RANDOM() LIMIT ?", (QUESTION_COUNT,)).fetchall()
   if len(qs) < QUESTION_COUNT: raise HTTPException(400, f'Недостаточно активных вопросов: нужно {QUESTION_COUNT}, доступно {len(qs)}')
   now = int(time.time())
-  cur = c.execute("INSERT INTO attempts(user_id,score,total,passed,answers,created,started,status) VALUES(?,0,33,0,'{}',?,?,'started')", (u['id'], now, now))
-  aid = cur.lastrowid
-  for q in qs:
-   c.execute("INSERT INTO attempt_questions(attempt_id,question_id,body_snapshot,answer) VALUES(?,?,?,'')", (aid,q['id'],q['body']))
+  aid = inserted_id(c,"INSERT INTO attempts(user_id,score,total,passed,answers,created,started,status) VALUES(?,0,33,0,'{}',?,?,'started')", (u['id'], now, now))
+  for pos,q in enumerate(qs):
+   c.execute("INSERT INTO attempt_questions(attempt_id,question_id,body_snapshot,answer,position) VALUES(?,?,?,'',?)", (aid,q['id'],q['body'],pos))
   audit(c,u,'Аттестация начата',f'Попытка №{aid} · лимит 30 минут')
   c.commit()
   return {'ok':True,'attempt_id':aid,'status':'started','resumed':False,'started':now,'limit':EXAM_LIMIT_SECONDS}
@@ -226,7 +331,7 @@ def save_exam_answer(x:AnswerSave,req:Request):
 def questions(req:Request):
  u=require(req);c=db();a=c.execute("SELECT id FROM attempts WHERE user_id=? AND status='started' ORDER BY id DESC LIMIT 1",(u['id'],)).fetchone()
  if not a:c.close();raise HTTPException(403,'Сначала начните аттестацию')
- rows=c.execute('SELECT aq.question_id,aq.body_snapshot,aq.answer,q.options,q.points FROM attempt_questions aq JOIN questions q ON q.id=aq.question_id WHERE aq.attempt_id=? ORDER BY aq.rowid',(a['id'],)).fetchall();c.close()
+ rows=c.execute('SELECT aq.question_id,aq.body_snapshot,aq.answer,q.options,q.points FROM attempt_questions aq JOIN questions q ON q.id=aq.question_id WHERE aq.attempt_id=? ORDER BY aq.position, aq.question_id',(a['id'],)).fetchall();c.close()
  return [{'id':r['question_id'],'body':r['body_snapshot'],'answer':r['answer'],'options':json.loads(r['options'] or '[]'),'points':r['points']} for r in rows]
 @app.post('/api/submit')
 def submit(x:Answers,req:Request):
@@ -251,7 +356,7 @@ def reviews(req:Request):
 def review_detail(aid:int,req:Request):
  require(req,staff=True);c=db();a=c.execute("SELECT a.*,u.nickname,u.role FROM attempts a JOIN users u ON u.id=a.user_id WHERE a.id=? AND a.status='pending_review'",(aid,)).fetchone()
  if not a:c.close();raise HTTPException(404,'Работа не найдена или уже проверена')
- rows=c.execute('SELECT question_id,body_snapshot,answer,mark,reviewed_by,reviewed_at FROM attempt_questions WHERE attempt_id=? ORDER BY rowid',(aid,)).fetchall();c.close();return {'attempt':dict(a),'answers':[dict(r) for r in rows]}
+ rows=c.execute('SELECT question_id,body_snapshot,answer,mark,reviewed_by,reviewed_at FROM attempt_questions WHERE attempt_id=? ORDER BY position, question_id',(aid,)).fetchall();c.close();return {'attempt':dict(a),'answers':[dict(r) for r in rows]}
 @app.post('/api/admin/reviews/{aid}/{qid}/{mark}')
 def mark_answer(aid:int,qid:int,mark:int,req:Request):
  actor=require_staff_action(req)
@@ -290,7 +395,7 @@ def list_admin_questions(req:Request):
 def add_question(x:QuestionIn,req:Request):
  require_staff_action(req);validate_question(x);c=db()
  if c.execute('SELECT COUNT(*) FROM questions').fetchone()[0]>=5000:c.close();raise HTTPException(400,'Достигнут лимит базы вопросов')
- cur=c.execute('INSERT INTO questions(body,options,correct,points,active) VALUES(?,?,?,1,?)',(x.body.strip(),json.dumps(x.options,ensure_ascii=False),x.correct,int(x.active)));c.commit();qid=cur.lastrowid;c.close();return {'id':qid}
+ qid=inserted_id(c,'INSERT INTO questions(body,options,correct,points,active) VALUES(?,?,?,1,?)',(x.body.strip(),json.dumps(x.options,ensure_ascii=False),x.correct,int(x.active)));c.commit();c.close();return {'id':qid}
 @app.put('/api/admin/questions/{qid}')
 def edit_question(qid:int,x:QuestionIn,req:Request):
  require_staff_action(req);validate_question(x);c=db();cur=c.execute('UPDATE questions SET body=?,options=?,correct=?,points=1,active=? WHERE id=?',(x.body.strip(),json.dumps(x.options,ensure_ascii=False),x.correct,int(x.active),qid));c.commit();c.close()
@@ -312,7 +417,7 @@ def bulk_questions(payload:dict,req:Request):
  if not cleaned:raise HTTPException(400,'Вставьте вопросы: по одному на строку, либо передайте массив questions')
  c=db();existing={r['body'].strip().casefold() for r in c.execute('SELECT body FROM questions').fetchall()};new=[q for q in cleaned if q.casefold() not in existing]
  if len(new)>1000 or len(existing)+len(new)>5000:c.close();raise HTTPException(400,'Лимит базы — 5000 вопросов')
- for body in new:c.execute('INSERT INTO questions(body,options,correct,points,active) VALUES(?,"[]",0,1,1)',(body,))
+ for body in new:c.execute('INSERT INTO questions(body,options,correct,points,active) VALUES(?,"[]",-1,1,1)',(body,))
  audit(c,actor,'Массовая загрузка вопросов',f'Добавлено {len(new)} вопросов');c.commit();total=c.execute('SELECT COUNT(*) FROM questions WHERE active=1').fetchone()[0];c.close();return {'ok':True,'added':len(new),'duplicates':len(cleaned)-len(new),'active_total':total}
 @app.get('/api/notifications')
 def notifications(req:Request):
@@ -390,14 +495,13 @@ def set_rank(uid:int,x:RoleIn,req:Request):
  if x.role not in RANKS:raise HTTPException(400,'Недопустимое звание')
  c=db();u=c.execute('SELECT * FROM users WHERE id=? AND nickname<>?',(uid,OWNER)).fetchone()
  if not u:c.close();raise HTTPException(404,'Пользователь не найден')
- if u['role'] not in ('Начальник ОСВ','Заместитель начальника ОСВ') and x.role!='Без звания':c.close();raise HTTPException(400,'Звание можно назначать только начальнику или заместителю ОСВ')
  c.execute('UPDATE users SET rank=? WHERE id=?',(x.role,uid));c.execute('INSERT INTO user_history(user_id,actor,field,old_value,new_value,created) VALUES(?,?,?,?,?,?)',(uid,actor['nickname'],'Звание',u['rank'],x.role,int(time.time())));audit(c,actor,'Звание изменено',f"{u['nickname']} · {x.role}");c.commit();c.close();return {'ok':True,'rank':x.role}
 class AdminToggle(BaseModel):
  enabled: bool
 
 @app.get('/api/admin/administrators')
 def administrators(req:Request):
- require(req,owner=True); c=db(); rows=c.execute("SELECT id,nickname,mask,rank,last_login,created FROM users WHERE role='Администратор' AND role_approved=1 ORDER BY nickname COLLATE NOCASE").fetchall(); c.close(); return [dict(r) for r in rows]
+ require(req,owner=True); c=db(); rows=c.execute("SELECT id,nickname,mask,rank,last_login,created FROM users WHERE role='Администратор' AND role_approved=1 ORDER BY LOWER(nickname)").fetchall(); c.close(); return [dict(r) for r in rows]
 
 @app.post('/api/admin/users/{uid}/admin')
 def toggle_admin(uid:int,x:AdminToggle,req:Request):
@@ -422,11 +526,13 @@ def toggle_admin(uid:int,x:AdminToggle,req:Request):
  c.commit(); c.close(); return {'ok':True,'role':new}
 
 @app.delete('/api/admin/users/{uid}')
-def delete_user(uid:int,req:Request):
- actor=require(req,owner=True);c=db();u=c.execute('SELECT * FROM users WHERE id=? AND nickname<>?',(uid,OWNER)).fetchone()
+def delete_user(uid:int,req:Request,confirm:str=''):
+ actor=require(req,owner=True);
+ if confirm != 'УДАЛИТЬ': raise HTTPException(400,'Для удаления введите подтверждение: УДАЛИТЬ')
+ c=db();u=c.execute('SELECT * FROM users WHERE id=? AND nickname<>?',(uid,OWNER)).fetchone()
  if not u:c.close();raise HTTPException(404,'Пользователь не найден или защищённый аккаунт')
  audit(c,actor,'Пользователь удалён',f"{u['nickname']} · {u['role']}")
- c.execute('DELETE FROM exam_requests WHERE user_id=?',(uid,));c.execute('DELETE FROM attempt_questions WHERE attempt_id IN (SELECT id FROM attempts WHERE user_id=?)',(uid,));c.execute('DELETE FROM notifications WHERE user_id=?',(uid,));c.execute('DELETE FROM personnel_notes WHERE user_id=?',(uid,));c.execute('DELETE FROM attempts WHERE user_id=?',(uid,));c.execute('DELETE FROM users WHERE id=?',(uid,));c.commit();c.close();return {'ok':True}
+ c.execute('DELETE FROM training_attempts WHERE user_id=?',(uid,));c.execute('DELETE FROM awards WHERE user_id=?',(uid,));c.execute('DELETE FROM sessions WHERE user_id=?',(uid,));c.execute('DELETE FROM exam_requests WHERE user_id=?',(uid,));c.execute('DELETE FROM attempt_questions WHERE attempt_id IN (SELECT id FROM attempts WHERE user_id=?)',(uid,));c.execute('DELETE FROM notifications WHERE user_id=?',(uid,));c.execute('DELETE FROM personnel_notes WHERE user_id=?',(uid,));c.execute('DELETE FROM attempts WHERE user_id=?',(uid,));c.execute('DELETE FROM users WHERE id=?',(uid,));c.commit();c.close();return {'ok':True}
 
 
 # Personnel dossier and internal service communications
@@ -454,7 +560,7 @@ def personnel_note(uid:int,payload:dict,req:Request):
  now=int(time.time()); c.execute('INSERT INTO personnel_notes(user_id,kind,body,actor,created) VALUES(?,?,?,?,?)',(uid,kind,body,actor['nickname'],now)); audit(c,actor,'Запись в личное дело',f'{target["nickname"]} · {kind}: {body[:160]}'); c.execute('INSERT INTO notifications(user_id,title,body,created) VALUES(?,?,?,?)',(uid,'Обновлено личное дело',f'{kind}: {body}',now)); c.commit(); c.close(); return {'ok':True}
 @app.get('/api/chat/people')
 def chat_people(req:Request):
- u=require(req); c=db(); rows=c.execute('SELECT id,nickname,role FROM users WHERE role_approved=1 AND id<>? ORDER BY nickname COLLATE NOCASE',(u['id'],)).fetchall(); c.close(); return [dict(x) for x in rows]
+ u=require(req); c=db(); rows=c.execute('SELECT id,nickname,role FROM users WHERE role_approved=1 AND id<>? ORDER BY LOWER(nickname)',(u['id'],)).fetchall(); c.close(); return [dict(x) for x in rows]
 @app.get('/api/chat/messages')
 def chat_messages(req:Request,room:str='general',peer:int|None=None):
  u=require(req); c=db()
@@ -480,7 +586,7 @@ def chat_send(payload:dict,req:Request):
   if not other or peer==u['id']: raise HTTPException(404,'Собеседник недоступен')
   recipient=peer
  else: raise HTTPException(400,'Неизвестный чат')
- c=db(); now=int(time.time()); c.execute('INSERT INTO chat_messages(room,sender_id,recipient_id,body,created) VALUES(?,?,?,?,?)',(room,u['id'],recipient,body,now)); mid=c.execute('SELECT last_insert_rowid()').fetchone()[0]; audit(c,u,'Сообщение отправлено',f'{room} · #{mid}'); c.commit(); c.close(); return {'ok':True,'id':mid}
+ c=db(); now=int(time.time()); c.execute('INSERT INTO chat_messages(room,sender_id,recipient_id,body,created) VALUES(?,?,?,?,?)',(room,u['id'],recipient,body,now)); mid=c.execute('SELECT id FROM chat_messages WHERE sender_id=? ORDER BY id DESC LIMIT 1',(u['id'],)).fetchone()['id']; audit(c,u,'Сообщение отправлено',f'{room} · #{mid}'); c.commit(); c.close(); return {'ok':True,'id':mid}
 @app.get('/api/dashboard')
 def dashboard(req:Request):
  u=require(req);c=db();now=int(time.time());
@@ -497,3 +603,182 @@ def results(req:Request):
 @app.get('/api/admin/audit')
 def audit_log(req:Request):
  require(req,staff=True);c=db();rows=c.execute('SELECT * FROM audit ORDER BY created DESC LIMIT 1000').fetchall();c.close();return [dict(r) for r in rows]
+
+# ===== V14 COMMAND CENTER: operational tools, training, structure, announcements, security =====
+def _staff_or_owner(req):
+    return require(req, staff=True)
+
+def _manager(req):
+    u=require(req)
+    if u['role'] not in ('Владелец','Начальник ОСВ') or not u['role_approved']:
+        raise HTTPException(403,'Только владелец или начальник ОСВ')
+    return u
+
+def _audience_match(role, audience):
+    if audience=='all': return True
+    if audience=='staff': return role in ('Владелец','Начальник ОСВ','Заместитель начальника ОСВ','Инструктор','Администратор')
+    if audience=='instructors': return role=='Инструктор'
+    if audience=='inspectors': return role in ('Инспектор','Старший инспектор')
+    if audience=='trainees': return role=='Стажёр'
+    if audience=='management': return role in ('Владелец','Начальник ОСВ','Заместитель начальника ОСВ')
+    return False
+
+@app.get('/api/operational')
+def operational(req:Request):
+    actor=_staff_or_owner(req); c=db(); now=int(time.time())
+    staff=c.execute("SELECT COUNT(*) FROM users WHERE role_approved=1 AND COALESCE(archived,0)=0").fetchone()[0]
+    online=c.execute("SELECT COUNT(*) FROM users WHERE role_approved=1 AND COALESCE(archived,0)=0 AND last_login>=?",(now-15*60,)).fetchone()[0]
+    checking=c.execute("SELECT COUNT(*) FROM attempts WHERE status='pending_review'").fetchone()[0]
+    blocked=c.execute("SELECT COUNT(*) FROM users WHERE blocked=1 AND archived=0").fetchone()[0]
+    pending_roles=c.execute("SELECT COUNT(*) FROM users WHERE role_approved=0 AND nickname<>? AND archived=0",(OWNER,)).fetchone()[0]
+    pending_exam=c.execute("SELECT COUNT(*) FROM exam_requests WHERE status='pending'").fetchone()[0]
+    events=c.execute('SELECT id,nickname,event,details,created FROM audit ORDER BY created DESC LIMIT 20').fetchall()
+    c.close()
+    return {'staff':staff,'online':online,'checking':checking,'blocked':blocked,'pending_roles':pending_roles,'pending_exam':pending_exam,'problems':blocked+pending_roles,'events':[dict(x) for x in events]}
+
+@app.get('/api/structure')
+def structure(req:Request):
+    _staff_or_owner(req); c=db()
+    rows=c.execute("SELECT id,nickname,mask,role,position,rank,last_login,role_approved FROM users WHERE role_approved=1 AND COALESCE(archived,0)=0 ORDER BY CASE role WHEN 'Владелец' THEN 0 WHEN 'Начальник ОСВ' THEN 1 WHEN 'Заместитель начальника ОСВ' THEN 2 WHEN 'Инструктор' THEN 3 WHEN 'Старший инспектор' THEN 4 WHEN 'Инспектор' THEN 5 WHEN 'Стажёр' THEN 6 ELSE 7 END, LOWER(nickname)").fetchall(); c.close()
+    groups={r:[] for r in ['Владелец','Начальник ОСВ','Заместитель начальника ОСВ','Инструктор','Старший инспектор','Инспектор','Стажёр','Администратор']}
+    for x in rows: groups.setdefault(x['role'],[]).append(dict(x))
+    return groups
+
+class BroadcastIn(BaseModel):
+    title:str=Field(min_length=2,max_length=120)
+    body:str=Field(min_length=2,max_length=3000)
+    audience:str='all'
+
+@app.post('/api/admin/broadcast')
+def broadcast(x:BroadcastIn,req:Request):
+    actor=_manager(req)
+    if x.audience not in ('all','staff','instructors','inspectors','trainees','management'):
+        raise HTTPException(400,'Недопустимая аудитория')
+    c=db(); users=c.execute("SELECT id,role FROM users WHERE role_approved=1 AND COALESCE(archived,0)=0").fetchall(); now=int(time.time()); sent=0
+    aid=inserted_id(c,'INSERT INTO announcements(title,body,audience,actor,created) VALUES(?,?,?,?,?)',(x.title.strip(),x.body.strip(),x.audience,actor['nickname'],now))
+    for u in users:
+        if _audience_match(u['role'],x.audience):
+            c.execute('INSERT INTO notifications(user_id,title,body,created) VALUES(?,?,?,?)',(u['id'],x.title.strip(),x.body.strip(),now)); sent+=1
+    audit(c,actor,'Массовое уведомление',f'{x.title.strip()} · аудитория {x.audience} · получателей {sent}'); c.commit(); c.close()
+    return {'ok':True,'id':aid,'sent':sent}
+
+@app.get('/api/announcements')
+def announcements(req:Request):
+    u=require(req); c=db(); rows=c.execute('SELECT * FROM announcements ORDER BY created DESC LIMIT 100').fetchall(); c.close()
+    return [dict(r) for r in rows if _audience_match(u['role'],r['audience']) or u['role']=='Владелец']
+
+@app.get('/api/calendar')
+def calendar(req:Request):
+    require(req); c=db(); rows=c.execute('SELECT * FROM calendar_events ORDER BY starts ASC LIMIT 100').fetchall(); c.close(); return [dict(x) for x in rows]
+
+class CalendarIn(BaseModel):
+    title:str=Field(min_length=2,max_length=160)
+    body:str=Field(default='',max_length=1500)
+    starts:int
+
+@app.post('/api/admin/calendar')
+def add_calendar(x:CalendarIn,req:Request):
+    actor=_manager(req); c=db(); now=int(time.time()); eid=inserted_id(c,'INSERT INTO calendar_events(title,body,starts,created,actor) VALUES(?,?,?,?,?)',(x.title.strip(),x.body.strip(),x.starts,now,actor['nickname']))
+    audit(c,actor,'Создано мероприятие',f'{x.title.strip()} · {x.starts}');
+    for u in c.execute("SELECT id FROM users WHERE role_approved=1 AND archived=0").fetchall(): c.execute('INSERT INTO notifications(user_id,title,body,created) VALUES(?,?,?,?)',(u['id'],'Новое мероприятие',x.title.strip(),now))
+    c.commit(); c.close(); return {'ok':True,'id':eid}
+
+class ArchiveIn(BaseModel):
+    reason:str=Field(min_length=2,max_length=1000)
+
+@app.post('/api/admin/users/{uid}/archive')
+def archive_user(uid:int,x:ArchiveIn,req:Request):
+    actor=_manager(req); c=db(); u=c.execute('SELECT * FROM users WHERE id=? AND nickname<>?',(uid,OWNER)).fetchone()
+    if not u: c.close(); raise HTTPException(404,'Сотрудник не найден или защищён')
+    if u['archived']: c.close(); raise HTTPException(400,'Сотрудник уже в архиве')
+    data={k:u[k] for k in u.keys()}; now=int(time.time())
+    aid=inserted_id(c,'INSERT INTO archived_users(original_user_id,nickname,mask,role,rank,reason,actor,created,data_json) VALUES(?,?,?,?,?,?,?,?,?)',(u['id'],u['nickname'],u['mask'],u['role'],u['rank'],x.reason.strip(),actor['nickname'],now,json.dumps(data,ensure_ascii=False,default=str)))
+    c.execute('UPDATE users SET archived=1,archived_at=?,archived_by=?,role_approved=0 WHERE id=?',(now,actor['nickname'],uid)); audit(c,actor,'Сотрудник отправлен в архив',f'{u["nickname"]} · {x.reason.strip()}'); c.commit(); c.close(); return {'ok':True,'archive_id':aid}
+
+@app.get('/api/admin/archive')
+def archive_list(req:Request):
+    _staff_or_owner(req); c=db(); rows=c.execute('SELECT id,original_user_id,nickname,mask,role,rank,reason,actor,created FROM archived_users ORDER BY created DESC LIMIT 500').fetchall(); c.close(); return [dict(x) for x in rows]
+
+@app.post('/api/admin/archive/{aid}/restore')
+def archive_restore(aid:int,req:Request):
+    actor=_manager(req); c=db(); a=c.execute('SELECT * FROM archived_users WHERE id=?',(aid,)).fetchone()
+    if not a: c.close(); raise HTTPException(404,'Архивная запись не найдена')
+    try: data=json.loads(a['data_json'])
+    except: data={}
+    uid=a['original_user_id']; existing=c.execute('SELECT id FROM users WHERE id=?',(uid,)).fetchone()
+    if existing:
+        c.execute('UPDATE users SET archived=0,role_approved=0,role=\'Стажёр\',position=\'Стажёр\' WHERE id=?',(uid,))
+    else:
+        # Restore under original id when possible.
+        fields=['nickname','mask','position','password','role','created','role_approved','role_requested','rank','retake_required','admin_prev_role']
+        vals=[data.get(k) for k in fields]
+        c.execute('INSERT INTO users(id,nickname,mask,position,password,role,created,role_approved,role_requested,rank,retake_required,admin_prev_role,archived) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,0)',[uid]+vals)
+    audit(c,actor,'Сотрудник восстановлен из архива',f'{a["nickname"]} · архив #{aid}'); c.commit(); c.close(); return {'ok':True}
+
+class BlockIn(BaseModel):
+    blocked:bool
+    reason:str=Field(default='',max_length=1000)
+
+@app.post('/api/admin/users/{uid}/block')
+def block_user(uid:int,x:BlockIn,req:Request):
+    actor=_manager(req); c=db(); u=c.execute('SELECT * FROM users WHERE id=? AND nickname<>?',(uid,OWNER)).fetchone()
+    if not u: c.close(); raise HTTPException(404,'Сотрудник не найден или защищён')
+    now=int(time.time()); reason=x.reason.strip() or 'Без указания причины'
+    c.execute('UPDATE users SET blocked=?,block_reason=?,blocked_at=?,blocked_by=? WHERE id=?',(1 if x.blocked else 0,reason if x.blocked else None,now if x.blocked else None,actor['nickname'] if x.blocked else None,uid))
+    audit(c,actor,'Аккаунт заблокирован' if x.blocked else 'Блокировка снята',f'{u["nickname"]} · {reason}'); c.commit(); c.close(); return {'ok':True,'blocked':x.blocked}
+
+@app.get('/api/admin/security')
+def security(req:Request):
+    _staff_or_owner(req); c=db();
+    blocked=c.execute("SELECT id,nickname,role,block_reason,blocked_at,blocked_by FROM users WHERE blocked=1 ORDER BY blocked_at DESC").fetchall()
+    logins=c.execute("SELECT nickname,event,details,created FROM audit WHERE event IN ('Вход на сайт','Выход с сайта') ORDER BY created DESC LIMIT 100").fetchall()
+    admins=c.execute("SELECT nickname,last_login,created FROM users WHERE role='Администратор' AND role_approved=1 ORDER BY nickname").fetchall(); c.close()
+    return {'blocked':[dict(x) for x in blocked],'logins':[dict(x) for x in logins],'admins':[dict(x) for x in admins]}
+
+@app.get('/api/admin/export/roster')
+def export_roster(req:Request):
+    _staff_or_owner(req); c=db(); rows=c.execute('SELECT id,nickname,mask,role,rank,created,last_login,role_approved,retake_required FROM users WHERE archived=0 ORDER BY id').fetchall(); c.close()
+    out=io.StringIO(); w=csv.writer(out); w.writerow(['ID','Ник','Маска','Должность','Звание','Вступил','Последний вход','Подтвержден','Переаттестация'])
+    for r in rows: w.writerow([r['id'],r['nickname'],r['mask'],r['role'],r['rank'],r['created'],r['last_login'],r['role_approved'],r['retake_required']])
+    return StreamingResponse(iter([out.getvalue().encode('utf-8-sig')]),media_type='text/csv',headers={'Content-Disposition':'attachment; filename="osv_roster.csv"'})
+
+@app.get('/api/admin/backup')
+def backup(req:Request):
+    actor=require(req,owner=True); c=db(); tables=['users','questions','attempts','attempt_questions','exam_requests','audit','notifications','personnel_notes','user_history','announcements','calendar_events','awards']
+    data={}
+    for t in tables:
+        data[t]=[dict(r) for r in c.execute(f'SELECT * FROM {t}').fetchall()]
+    audit(c,actor,'Создана резервная копия БД',f'{len(tables)} таблиц'); c.commit(); c.close()
+    return {'ok':True,'created':int(time.time()),'database':'postgresql' if USE_POSTGRES else 'sqlite','snapshot':data}
+
+@app.get('/api/public/summary')
+def public_summary():
+    c=db(); staff=c.execute("SELECT COUNT(*) FROM users WHERE role_approved=1 AND archived=0").fetchone()[0]; passed=c.execute("SELECT COUNT(*) FROM attempts WHERE status='finished' AND passed=1").fetchone()[0]; c.close(); return {'name':'ОСВ BLUE COMMAND','staff':staff,'passed_attestations':passed,'status':'online'}
+
+@app.post('/api/training/start')
+def training_start(req:Request):
+    u=require(req); c=db(); qs=c.execute('SELECT id,body FROM questions WHERE active=1 ORDER BY RANDOM() LIMIT 10').fetchall()
+    if len(qs)<10: c.close(); raise HTTPException(400,'Для тренировочного режима нужно минимум 10 активных вопросов')
+    now=int(time.time()); payload=[{'id':x['id'],'body':x['body']} for x in qs]; tid=inserted_id(c,'INSERT INTO training_attempts(user_id,questions,answers,score,total,created) VALUES(?,?,\'{}\',0,10,?)',(u['id'],json.dumps(payload,ensure_ascii=False),now)); c.commit(); c.close(); return {'id':tid,'questions':payload}
+
+class TrainingSubmit(BaseModel):
+    attempt_id:int; answers:dict[str,str]
+
+@app.post('/api/training/submit')
+def training_submit(x:TrainingSubmit,req:Request):
+    u=require(req); c=db(); t=c.execute('SELECT * FROM training_attempts WHERE id=? AND user_id=? AND finished IS NULL',(x.attempt_id,u['id'])).fetchone()
+    if not t: c.close(); raise HTTPException(404,'Тренировочная попытка не найдена')
+    qs=json.loads(t['questions']); answers={str(k):str(v).strip() for k,v in x.answers.items()}; answered=sum(1 for q in qs if answers.get(str(q['id'])))
+    # Written questions are instructor-checked in the real attestation. Training therefore measures completion and highlights weak themes without pretending to know a correct answer.
+    theme_counts={}; theme_map={
+      'Задержания':'задерж', 'Переговоры':'переговор', 'Оружие и спецсредства':'оруж|огонь|спецсредств', 'Нормативная база':'ук|коап|конституц|федерал', 'ОСВ и субординация':'осв|руководств|представля|подчиня'
+    }
+    import re as _re
+    for q in qs:
+        body=q['body'].lower(); theme='Общие вопросы'
+        for name,pat in theme_map.items():
+            if _re.search(pat,body): theme=name; break
+        theme_counts[theme]=theme_counts.get(theme,0)+(1 if answers.get(str(q['id'])) else 0)
+    score=answered; now=int(time.time()); c.execute('UPDATE training_attempts SET answers=?,score=?,finished=? WHERE id=?',(json.dumps(answers,ensure_ascii=False),score,now,x.attempt_id)); audit(c,u,'Тренировочный тест завершён',f'{score}/10 заполнено'); c.commit(); c.close()
+    weak=sorted(theme_counts.items(),key=lambda kv:kv[1])[:1]
+    return {'ok':True,'score':score,'total':10,'weak_theme':weak[0][0] if weak else '—','note':'В тренировочном режиме письменные ответы не считаются правильными/неправильными автоматически. Для точной проверки используйте основную аттестацию.'}
