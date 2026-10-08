@@ -224,7 +224,7 @@ def startup():
   # One-time migration: deactivate the old demo bank and add the requested 33 written questions without breaking existing attempt history.
   c.execute('UPDATE questions SET active=0')
   for body in QUESTION_BANK:
-   c.execute('INSERT INTO questions(body,options,correct,points,active) VALUES(?,"[]",-1,1,1)',(body,))
+   c.execute('INSERT INTO questions(body,options,correct,points,active) VALUES(?,?, -1,1,1)',(body,'[]'))
   c.execute("INSERT INTO app_meta(key,value) VALUES('written_question_bank_v1','1')")
  owner=c.execute('SELECT * FROM users WHERE nickname=?',(OWNER,)).fetchone()
  if not owner:c.execute('INSERT INTO users(nickname,position,password,role,created,role_approved,role_requested) VALUES(?,?,?,?,?,1,?)',(OWNER,'Владелец ОСВ',pw_hash(os.getenv('OWNER_PASSWORD','ChangeMe_123!')),'Владелец',int(time.time()),'Владелец'))
@@ -417,7 +417,7 @@ def bulk_questions(payload:dict,req:Request):
  if not cleaned:raise HTTPException(400,'Вставьте вопросы: по одному на строку, либо передайте массив questions')
  c=db();existing={r['body'].strip().casefold() for r in c.execute('SELECT body FROM questions').fetchall()};new=[q for q in cleaned if q.casefold() not in existing]
  if len(new)>1000 or len(existing)+len(new)>5000:c.close();raise HTTPException(400,'Лимит базы — 5000 вопросов')
- for body in new:c.execute('INSERT INTO questions(body,options,correct,points,active) VALUES(?,"[]",-1,1,1)',(body,))
+ for body in new:c.execute('INSERT INTO questions(body,options,correct,points,active) VALUES(?,?, -1,1,1)',(body,'[]'))
  audit(c,actor,'Массовая загрузка вопросов',f'Добавлено {len(new)} вопросов');c.commit();total=c.execute('SELECT COUNT(*) FROM questions WHERE active=1').fetchone()[0];c.close();return {'ok':True,'added':len(new),'duplicates':len(cleaned)-len(new),'active_total':total}
 @app.get('/api/notifications')
 def notifications(req:Request):
