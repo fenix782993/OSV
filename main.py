@@ -258,6 +258,14 @@ def favicon():
 
 @app.get('/')
 def index():return FileResponse(ROOT/'static'/'index.html')
+@app.get('/hosp.png')
+def hosp_banner():
+ p=ROOT/'hosp.png'
+ if not p.exists():
+  p=ROOT/'static'/'hosp.png'
+ if not p.exists():raise HTTPException(404,'Файл hosp.png не найден в корне репозитория или static/')
+ return FileResponse(p,media_type='image/png')
+
 @app.get('/banner.jpg')
 def banner():
  p=ROOT/'banner.jpg'
