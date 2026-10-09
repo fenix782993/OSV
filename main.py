@@ -558,7 +558,16 @@ def delete_user(uid:int,req:Request,confirm:str=''):
  c=db();u=c.execute('SELECT * FROM users WHERE id=? AND nickname<>?',(uid,OWNER)).fetchone()
  if not u:c.close();raise HTTPException(404,'Пользователь не найден или защищённый аккаунт')
  audit(c,actor,'Пользователь удалён',f"{u['nickname']} · {u['role']}")
- c.execute('DELETE FROM training_attempts WHERE user_id=?',(uid,));c.execute('DELETE FROM awards WHERE user_id=?',(uid,));c.execute('DELETE FROM sessions WHERE user_id=?',(uid,));c.execute('DELETE FROM exam_requests WHERE user_id=?',(uid,));c.execute('DELETE FROM attempt_questions WHERE attempt_id IN (SELECT id FROM attempts WHERE user_id=?)',(uid,));c.execute('DELETE FROM notifications WHERE user_id=?',(uid,));c.execute('DELETE FROM personnel_notes WHERE user_id=?',(uid,));c.execute('DELETE FROM attempts WHERE user_id=?',(uid,));c.execute('DELETE FROM users WHERE id=?',(uid,));c.commit();c.close();return {'ok':True}
+ try:
+  # Delete all dependent rows first; PostgreSQL enforces FK constraints.
+  delete_user_data(c,uid)
+  c.commit()
+ except Exception:
+  c.rollback()
+  raise HTTPException(500,'Не удалось удалить сотрудника: связанные записи не были удалены. Проверьте логи сервера.')
+ finally:
+  c.close()
+ return {'ok':True}
 
 
 # Personnel dossier and internal service communications
