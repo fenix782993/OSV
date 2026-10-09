@@ -130,7 +130,6 @@ def _pg_init_schema():
                 'ALTER TABLE users ADD COLUMN IF NOT EXISTS archived_by TEXT',
                 'ALTER TABLE attempt_questions ADD COLUMN IF NOT EXISTS position INTEGER NOT NULL DEFAULT 0']:
                 c.execute(sql)
-            migrate_sqlite_to_postgres(PGConn(c,release=PG_POOL.putconn))
             c.commit()
         finally:
             try: PG_POOL.putconn(c)
@@ -151,7 +150,6 @@ def _pg_init_schema():
                 'ALTER TABLE users ADD COLUMN IF NOT EXISTS archived_by TEXT',
                 'ALTER TABLE attempt_questions ADD COLUMN IF NOT EXISTS position INTEGER NOT NULL DEFAULT 0']:
                 c.execute(sql)
-            migrate_sqlite_to_postgres(PGConn(c))
             c.commit()
         finally:
             c.close()
