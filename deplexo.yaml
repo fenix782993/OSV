@@ -1,10 +1,9 @@
 version: 1
+type: web
 
-services:
-  - type: web
-    name: osv-attestation
-    runtime: docker
-    dockerfilePath: ./Dockerfile
-    ports:
-      - port: 3000
-        protocol: http
+build:
+  framework: dockerfile
+  dockerfile: Dockerfile
+
+run:
+  port: 3000
