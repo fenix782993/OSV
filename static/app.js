@@ -1,5 +1,5 @@
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
-let user=null, currentPage='home', mode='login', examRequest=null, attempt=null, examQuestions=[], examAnswers={}, examDeadline=0, examLock=false, examAdvanceBusy=false;
+let user=null, currentPage='home', mode='login', examRequest=null, attempt=null, examQuestions=[], examAnswers={}, examDeadline=0, examLock=false, examAdvanceBusy=false, authBusy=false;
 const STAFF=['Владелец','Начальник ОСВ','Заместитель начальника ОСВ','Инструктор','Администратор'];
 const MANAGERS=['Владелец','Начальник ОСВ'];
 const ADMINS=['Администратор'];
@@ -15,7 +15,20 @@ const FILTER_ROLES=[...ROLES,'Администратор'];
 const isOwner=()=>!!user&&user.role==='Владелец'&&user.role_approved;
 const RANKS=['Без звания','Полковник','Генерал'];
 const readableError=v=>{if(v==null)return '';if(typeof v==='string')return v;if(Array.isArray(v))return v.map(readableError).filter(Boolean).join('\n');if(typeof v==='object'){if(v.msg)return String(v.msg);if(v.message)return String(v.message);if(v.detail)return readableError(v.detail);const loc=Array.isArray(v.loc)?v.loc.filter(x=>x!=='body').join(' → '):'';return [loc, v.type, JSON.stringify(v)].filter(Boolean).join(': ')}return String(v)};
-const api=async(path,opt={})=>{const r=await fetch(path,{credentials:'include',headers:{'Content-Type':'application/json',...(opt.headers||{})},...opt});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(readableError(d.detail)||readableError(d.message)||`Ошибка ${r.status}`);return d};
+const api=async(path,opt={})=>{
+ const headers={'Accept':'application/json',...(opt.body?{'Content-Type':'application/json'}:{}),...(opt.headers||{})};
+ const controller=new AbortController();
+ const timeoutMs=Number(opt.timeoutMs)||20000;
+ const timeout=setTimeout(()=>controller.abort(),timeoutMs);
+ const request={...opt,credentials:'include',headers,signal:opt.signal||controller.signal}; delete request.timeoutMs;
+ let r;
+ try { r=await fetch(path,request); }
+ catch(err) { if(err?.name==='AbortError') throw Error('Сервер долго отвечает. Проверьте соединение и повторите попытку через несколько секунд.'); throw Error('Не удалось связаться с сервером. Проверьте подключение к сайту.'); }
+ finally { clearTimeout(timeout); }
+ const d=await r.json().catch(()=>({}));
+ if(!r.ok)throw Error(readableError(d.detail)||readableError(d.message)||`Ошибка ${r.status}`);
+ return d;
+};
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const date=t=>t?new Date(t*1000).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}):'—';
 const badge=(txt,kind='')=>`<span class="badge ${kind}">${esc(txt)}</span>`;
@@ -31,8 +44,27 @@ $$('.tab').forEach(b=>b.onclick=()=>setMode(b.dataset.tab));
 function openAuth(){ $('#authModal').classList.remove('hidden'); setMode('login'); document.body.classList.add('auth-lock') }
 function closeAuth(){ if(!user){return} $('#authModal').classList.add('hidden'); document.body.classList.remove('auth-lock') }
 function setMode(m){mode=m;$('.tab[data-tab="login"]').classList.toggle('active',m==='login');$('.tab[data-tab="register"]').classList.toggle('active',m==='register');$('#authTitle').textContent=m==='login'?'ВХОД В СИСТЕМУ':'СОЗДАНИЕ АККАУНТА';$('#authSubmit').textContent=m==='login'?'ВОЙТИ':'ЗАРЕГИСТРИРОВАТЬСЯ';$('#positionLabel').classList.toggle('hidden',m!=='register');$('#maskLabel').classList.toggle('hidden',m!=='register');$('#authHint').textContent=m==='register'?'Выберите желаемую должность. После одобрения руководством она будет назначена вашему аккаунту.':'Введите данные для входа в личный кабинет.';$('#authMsg').textContent=''}
-$('#authForm').onsubmit=async e=>{e.preventDefault();$('#authMsg').textContent='';const data={nickname:$('#nickname').value.trim(),password:$('#password').value};const wasRegister=mode==='register';if(wasRegister){data.mask=$('#mask').value.trim();data.position=$('#position').value;}try{if(wasRegister){await api('/api/register',{method:'POST',body:JSON.stringify(data)});await api('/api/login',{method:'POST',body:JSON.stringify({nickname:data.nickname,password:data.password})});}else{await api('/api/login',{method:'POST',body:JSON.stringify(data)});}await loadMe();closeAuth();if(wasRegister)navPage('profile')}catch(err){$('#authMsg').textContent=err.message}};
-async function loadMe(){const d=await api('/api/me');user=d.user;examRequest=d.exam_request;attempt=d.attempt;examLock=!!(attempt&&attempt.status==='started');document.body.classList.toggle('exam-lock',examLock);if(examLock)currentPage='exam';$$('.blacklist-only').forEach(x=>x.classList.toggle('hidden',!canSeeBlacklist()));$('#authOpen span').textContent=user?user.nickname:'Войти';if(user)$('#authOpen').firstChild.textContent='◉ ';if($('#topUserName'))$('#topUserName').textContent=user?user.nickname:'Гость';if($('#topUserRole'))$('#topUserRole').textContent=user?`${user.role} · ${user.rank||'Без звания'}`:'Вход не выполнен';if($('#topUser .avatar'))$('#topUser .avatar').textContent=user?(user.nickname||'О')[0].toUpperCase():'О';$$('.staff-only').forEach(x=>x.classList.toggle('hidden',!isStaff()));$$('.owner-only').forEach(x=>x.classList.toggle('hidden',!isOwner()));renderPage()}
+$('#authForm').onsubmit=async e=>{
+ e.preventDefault();
+ if(authBusy)return;
+ authBusy=true;
+ const submit=$('#authSubmit'), msg=$('#authMsg'), wasRegister=mode==='register';
+ const original=wasRegister?'РЕГИСТРАЦИЯ':'ВОЙТИ';
+ submit.disabled=true; submit.setAttribute('aria-busy','true'); submit.classList.add('is-loading');
+ submit.textContent=wasRegister?'СОЗДАЁМ АККАУНТ…':'ПРОВЕРЯЕМ ДАННЫЕ…';
+ msg.textContent='';
+ const data={nickname:$('#nickname').value.trim(),password:$('#password').value};
+ if(wasRegister){data.mask=$('#mask').value.trim();data.position=$('#position').value;}
+ try{
+  if(wasRegister){await api('/api/register',{method:'POST',body:JSON.stringify(data),timeoutMs:25000});}
+  const session=await api('/api/login',{method:'POST',body:JSON.stringify({nickname:data.nickname,password:data.password}),timeoutMs:25000});
+  if(session?.user)applyMeData(session);else await loadMe();
+  closeAuth(); if(wasRegister)navPage('profile');
+ }catch(err){msg.textContent=err.message;}
+ finally{authBusy=false;submit.disabled=false;submit.removeAttribute('aria-busy');submit.classList.remove('is-loading');submit.textContent=mode==='register'?'ЗАРЕГИСТРИРОВАТЬСЯ':'ВОЙТИ';}
+};
+function applyMeData(d){user=d.user;examRequest=d.exam_request;attempt=d.attempt;examLock=!!(attempt&&attempt.status==='started');document.body.classList.toggle('exam-lock',examLock);if(examLock)currentPage='exam';$$('.blacklist-only').forEach(x=>x.classList.toggle('hidden',!canSeeBlacklist()));$('#authOpen span').textContent=user?user.nickname:'Войти';if(user)$('#authOpen').firstChild.textContent='◉ ';if($('#topUserName'))$('#topUserName').textContent=user?user.nickname:'Гость';if($('#topUserRole'))$('#topUserRole').textContent=user?`${user.role} · ${user.rank||'Без звания'}`:'Вход не выполнен';if($('#topUser .avatar'))$('#topUser .avatar').textContent=user?(user.nickname||'О')[0].toUpperCase():'О';$$('.staff-only').forEach(x=>x.classList.toggle('hidden',!isStaff()));$$('.owner-only').forEach(x=>x.classList.toggle('hidden',!isOwner()));renderPage()}
+async function loadMe(){applyMeData(await api('/api/me'))}
 async function loadNotifications(){try{const rows=await api('/api/notifications');const unseen=rows.filter(x=>!x.seen).length;const b=$('#notifyBtn'),c=$('#notifyCount');if(b){b.classList.toggle('has-unread',unseen>0);b.title=unseen?`Новых уведомлений: ${unseen}`:'Уведомления';}if(c)c.textContent=unseen>99?'99+':unseen}catch{}}
 async function openNotifications(){if(!user)return openAuth();const rows=await api('/api/notifications');const wrap=document.createElement('div');wrap.className='overlay-card notification-overlay';wrap.innerHTML=`<div class="modal-card wide"><button class="close" data-close-notify>×</button><div class="eyebrow">УВЕДОМЛЕНИЯ</div><h2>УВЕДОМЛЕНИЯ</h2><div class="notification-list">${rows.length?rows.map(n=>`<article class="notification ${n.seen?'':'unread'}"><div class="notify-dot">${n.seen?'•':'!'}</div><div><b>${esc(n.title)}</b><p>${esc(n.body)}</p><small>${date(n.created)}</small></div></article>`).join(''):'<div class="empty">Новых уведомлений нет.</div>'}</div><button class="btn full" data-close-notify>Закрыть</button></div>`;document.body.appendChild(wrap);wrap.querySelectorAll('[data-close-notify]').forEach(x=>x.onclick=()=>wrap.remove());await api('/api/notifications/seen',{method:'POST'});loadNotifications()}
 $('#notifyBtn')?.addEventListener('click',openNotifications);$('#topUser')?.addEventListener('click',()=>user?navPage('profile'):openAuth());
@@ -213,8 +245,14 @@ async function renderQuestions(){
 function editQuestion(q){$('#app').innerHTML=shell('РЕДАКТОР <em>ВОПРОСА</em>','БАНК ВОПРОСОВ','Изменение текста письменного вопроса.',`<div class="panel" style="padding:25px"><textarea class="textarea" id="editQ">${esc(q.body)}</textarea><div class="actions"><button class="red-btn" id="saveQ">Сохранить</button><button class="btn" id="backQ">Назад</button></div><p id="editMsg" class="form-msg"></p></div>`);$('#saveQ').onclick=async()=>{try{await api(`/api/admin/questions/${q.id}`,{method:'PUT',body:JSON.stringify({body:$('#editQ').value,options:[],correct:-1,points:1,active:true})});renderQuestions()}catch(e){$('#editMsg').textContent=e.message}};$('#backQ').onclick=renderQuestions}
 async function renderAudit(){const rows=await api('/api/admin/audit');$('#app').innerHTML=shell('ЖУРНАЛ <em>ДЕЙСТВИЙ</em>','ЖУРНАЛ','Кадровые и системные действия.',`<div class="panel" style="padding:15px"><div class="table-wrap"><table class="table"><thead><tr><th>КТО</th><th>СОБЫТИЕ</th><th>ДЕТАЛИ</th><th>ВРЕМЯ</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.nickname)}</td><td>${esc(r.event)}</td><td>${esc(r.details)}</td><td>${date(r.created)}</td></tr>`).join('')||'<tr><td colspan="4">Журнал пуст.</td></tr>'}</tbody></table></div></div>`)}
 async function renderProfile(){if(!user)return $('#app').innerHTML=shell('ПРОФИЛЬ','ЛИЧНЫЙ КАБИНЕТ','Авторизуйтесь.',`<div class="empty"><button class="red-btn" id="profileLogin">Войти</button></div>`),$('#profileLogin').onclick=openAuth;let d=null;try{d=await api(`/api/personnel/${user.id}`)}catch{}const s=d?.stats||{attempts:0,passed:0,failed:0};$('#app').innerHTML=shell('ЛИЧНЫЙ <em>КАБИНЕТ</em>','ЛИЧНЫЙ КАБИНЕТ',`ID ${user.id}`,`<div class="profile-hero"><div class="avatar big">${esc((user.nickname||'?').slice(0,1).toUpperCase())}</div><div><span class="section-tag">ЛИЧНЫЕ ДАННЫЕ</span><h2>${esc(user.nickname)}</h2><p>#${user.id} · маска ${esc(user.mask||'—')}</p></div><div class="profile-role">${esc(user.role)}<small>${esc(user.rank||'Без звания')}</small></div></div><div class="dossier-stats"><div><b>${s.attempts||0}</b><small>АТТЕСТАЦИЙ</small></div><div><b>${s.passed||0}</b><small>СДАНО</small></div><div><b>${s.failed||0}</b><small>ПРОВАЛЕНО</small></div><div><b>${date(user.last_login)}</b><small>ПОСЛЕДНИЙ ВХОД</small></div></div><div class="profile-grid"><div class="profile-card"><span class="section-tag">СЛУЖЕБНЫЕ ДАННЫЕ</span><h3>Служебные данные</h3><p>Должность: <b>${esc(user.role)}</b></p>${!user.role_approved&&user.role_requested&&user.role_requested!==user.role?`<p>Заявлена должность: <b class="requested-role">${esc(user.role_requested)}</b></p>`:''}<p>Звание: <b>${esc(user.rank||'Без звания')}</b></p><p>Вступил: <b>${date(user.created)}</b></p><p>Статус: ${badge(user.role_approved?'Подтверждён':`Ожидает одобрения · ${user.role_requested||'Стажёр'}`,user.role_approved?'ok':'warn')}</p></div><div class="profile-card"><span class="section-tag">ДОСТУП</span><h3>Доступ</h3><p>Все права проверяются сервером. Изменение URL или интерфейса не выдаёт роль.</p><div class="profile-actions"><button class="red-btn" id="logout">Выйти</button><button class="btn" data-go="exam">Открыть аттестацию</button></div></div></div>`);$('#logout').onclick=async()=>{await api('/api/logout',{method:'POST'});user=null;examRequest=null;attempt=null;examLock=false;document.body.classList.remove('exam-lock');$$('.blacklist-only').forEach(x=>x.classList.add('hidden'));openAuth();renderHome()};$$('[data-go]').forEach(b=>b.onclick=()=>navPage(b.dataset.go))}
-function showBootSplash(){let el=$('#bootSplash');if(!el){el=document.createElement('div');el.id='bootSplash';el.className='boot-splash';el.innerHTML=`<div class="boot-card"><img src="/static/ai-command-art.png" alt="ОСВ BLUE COMMAND"><div class="boot-brand">ОСВ <span>BLUE COMMAND</span></div><div class="boot-caption">Подготовка системы…</div><div class="boot-track"><i></i></div></div>`;document.body.appendChild(el)}el.classList.remove('boot-hide')}function hideBootSplash(){const el=$('#bootSplash');if(!el)return;el.classList.add('boot-hide');setTimeout(()=>el.remove(),350)}
-(async()=>{showBootSplash();try{await loadMe();if(user)closeAuth();else{$('#authModal').classList.add('hidden');document.body.classList.remove('auth-lock');renderHome()}}catch{user=null;$('#authModal').classList.add('hidden');document.body.classList.remove('auth-lock');renderHome()}finally{setTimeout(hideBootSplash,2500)}})();
+function showBootSplash(){let el=$('#bootSplash');if(!el){el=document.createElement('div');el.id='bootSplash';el.className='boot-splash';el.setAttribute('aria-hidden','true');el.innerHTML=`<div class="boot-card"><div class="boot-emblem">◈</div><div class="boot-brand">ОСВ <span>BLUE COMMAND</span></div><div class="boot-caption">Подключение к системе…</div><div class="boot-track"><i></i></div></div>`;document.body.appendChild(el)}el.classList.remove('boot-hide')}function hideBootSplash(){const el=$('#bootSplash');if(!el)return;el.classList.add('boot-hide');setTimeout(()=>el.remove(),160)}
+(async()=>{
+ showBootSplash();
+ const splashFallback=setTimeout(hideBootSplash,1100);
+ try{await loadMe();if(user)closeAuth();else{$('#authModal').classList.add('hidden');document.body.classList.remove('auth-lock');renderHome()}}
+ catch{user=null;$('#authModal').classList.add('hidden');document.body.classList.remove('auth-lock');renderHome()}
+ finally{clearTimeout(splashFallback);hideBootSplash()}
+})();
 
 
 /* ===== V14 UI LAYER ===== */

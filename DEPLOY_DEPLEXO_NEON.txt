@@ -1,33 +1,25 @@
-OSV BLUE COMMAND V18 — DEPLOYMENT NOTES
+OSV BLUE COMMAND V19 — DEPLEXO + NEON DEPLOYMENT
 
-REPOSITORY CONTENTS
-Keep main.py, requirements.txt, and the static/ folder at the repository root.
+WHAT V19 FIXES
+- No Google Fonts requests: the page starts using local/system fonts, so it does not wait on Google domains.
+- Removed the 1.87 MB startup/login background image. The Premium blue/glass theme is CSS-only.
+- Login/registration form prevents duplicate submits and shows a clear loading state.
+- Successful login returns the current user, exam request and latest attempt in one API response; the browser no longer waits for an additional /api/me request before closing the login dialog.
+- Text responses use GZip; static files receive cache headers and a new cache-busting version.
+- Kept the existing re-attestation, blacklist, per-question 3-minute timer and exam navigation lock from V18.
 
-DEPLEXO BUILD COMMAND
-pip install -r requirements.txt
+DEPLOY IN DEPLEXO
+1. Extract this ZIP.
+2. Upload/commit all contents of this folder to the ROOT of the existing GitHub repository used by the Deplexo app. Do not put the project inside an extra nested folder.
+3. Build command: pip install -r requirements.txt
+4. Start command: uvicorn main:app --host 0.0.0.0 --port $PORT
+5. Preserve existing Deplexo secrets/environment variables. Ensure DATABASE_URL is the full Neon PostgreSQL connection string (not a Neon API token). The app also accepts NEON_DATABASE_URL as a fallback.
+6. Keep APP_SECRET unchanged if you want existing signed cookies to remain valid; the existing cookies may still expire naturally. OWNER_PASSWORD is only used if Fenix_Dinero is created for the first time.
+7. Do not replace/remove the current Neon database or change the connection string. The application will add missing tables/columns through its existing startup migration.
+8. When deployment finishes, open /api/health and verify "database":"postgresql". Then test owner login, an ordinary staff account, role permissions, question bank, attempts and blacklist.
 
-DEPLEXO START COMMAND
-uvicorn main:app --host 0.0.0.0 --port $PORT
+NETWORK / VPN NOTE
+The web interface itself no longer loads Google Fonts or the large banner from external services. If the entire Deplexo host/app URL still fails to open without VPN, that is a host/DNS/ISP routing issue and cannot be fixed by CSS or Python changes; compare whether the base Deplexo domain opens on the same connection.
 
-ENVIRONMENT VARIABLES
-DATABASE_URL = full pooled PostgreSQL connection string from Neon (recommended)
-APP_SECRET = long random private secret
-OWNER_PASSWORD = strong initial owner password, used only when Fenix_Dinero is first created
-COOKIE_SECURE = 1 when the site is served over HTTPS
-
-NEON SUPPORT
-The application reads DATABASE_URL, or NEON_DATABASE_URL as a fallback. The value must be the full PostgreSQL connection string, not an API token. Keep any unrelated token variable already configured in Deplexo unchanged. Never put real secrets in GitHub or this ZIP.
-
-VERIFY AFTER DEPLOYMENT
-Open /api/health. Expected response includes:
-  "status": "online"
-  "database": "postgresql"
-
-Do not delete any old database or hosting service until you have verified login, users, roles, question bank, applications and exam history against the Neon database.
-
-WHAT CHANGED IN V18
-- Individual and department-wide re-attestation for owner, head, deputy and instructors.
-- A blacklist for any nickname (including nicknames not registered on the site), with a reason, creator and timestamp.
-- Blacklist visible to owner, head, deputy and administrators; only owner, head and deputy can add/remove records.
-- Three-minute server-enforced timer per question, sequential question navigation, persisted position on reload, and app navigation lock during an active exam.
-- Scrollable sidebar with fixed bottom account/status controls.
+SAFETY
+Never commit real DATABASE_URL, APP_SECRET or OWNER_PASSWORD to GitHub. Keep them only in Deplexo Environment Variables. Do not delete old deployment/database until the new app is verified.

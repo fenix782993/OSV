@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel, Field
 try:
  import psycopg
@@ -20,8 +21,18 @@ except Exception:
 ROOT=Path(__file__).resolve().parent; DB=Path(os.getenv("DB_PATH",str(ROOT/"osv.db"))); DB.parent.mkdir(parents=True,exist_ok=True)
 DATABASE_URL=(os.getenv("DATABASE_URL") or os.getenv("NEON_DATABASE_URL") or "").strip()
 USE_POSTGRES=bool(DATABASE_URL)
-app=FastAPI(title="ОСВ — Аттестация",version="2.0.0")
+app=FastAPI(title="ОСВ — Аттестация",version="2.1.0")
+app.add_middleware(GZipMiddleware, minimum_size=700)
 app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
+
+@app.middleware('http')
+async def static_cache_headers(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith('/static/'):
+        # Assets are versioned in index.html; cache aggressively to reduce repeated downloads.
+        response.headers['Cache-Control'] = 'public, max-age=604800, stale-while-revalidate=86400'
+    response.headers.setdefault('X-Content-Type-Options', 'nosniff')
+    return response
 SECRET=os.getenv("APP_SECRET","change-this-secret-on-render").encode(); OWNER="Fenix_Dinero"; PASS_SCORE=28; QUESTION_COUNT=33; QUESTION_TIME_SECONDS=3*60; EXAM_LIMIT_SECONDS=QUESTION_COUNT*QUESTION_TIME_SECONDS
 ROLES=["Начальник ОСВ","Заместитель начальника ОСВ","Стажёр","Старший инспектор","Инспектор","Инструктор","Администратор"]
 RANKS=["Без звания","Полковник","Генерал"]
@@ -321,7 +332,17 @@ def login(x:Login,response:Response):
  c=db();u=c.execute('SELECT * FROM users WHERE nickname=?',(x.nickname.strip(),)).fetchone()
  if u and (u['blocked'] or u['archived']): c.close(); raise HTTPException(403,'Доступ к аккаунту ограничен')
  if not u or not check_pw(x.password,u['password']):c.close();raise HTTPException(401,'Неверный ник или пароль')
- now=int(time.time());c.execute('UPDATE users SET last_login=? WHERE id=?',(now,u['id']));u=c.execute('SELECT * FROM users WHERE id=?',(u['id'],)).fetchone();audit(c,u,'Вход на сайт');c.commit();c.close();response.set_cookie('osv_session',token(u['id']),httponly=True,samesite='lax',secure=os.getenv('COOKIE_SECURE','0')=='1',max_age=1209600);return {'ok':True}
+ now=int(time.time())
+ c.execute('UPDATE users SET last_login=? WHERE id=?',(now,u['id']))
+ u=c.execute('SELECT * FROM users WHERE id=?',(u['id'],)).fetchone()
+ audit(c,u,'Вход на сайт')
+ # Return the authenticated session snapshot in the login response so the UI does not
+ # wait for an extra /api/me round trip before dismissing the login dialog.
+ req_status=c.execute("SELECT status,created,reviewed FROM exam_requests WHERE user_id=? ORDER BY id DESC LIMIT 1",(u['id'],)).fetchone()
+ active_attempt=c.execute("SELECT id,started,finished,score,total,passed,status,active_position,question_started FROM attempts WHERE user_id=? ORDER BY id DESC LIMIT 1",(u['id'],)).fetchone()
+ c.commit();c.close()
+ response.set_cookie('osv_session',token(u['id']),httponly=True,samesite='lax',secure=os.getenv('COOKIE_SECURE','0')=='1',max_age=1209600)
+ return {'ok':True,'user':user_dict(u),'exam_request':dict(req_status) if req_status else None,'attempt':dict(active_attempt) if active_attempt else None}
 @app.post('/api/logout')
 def logout(req:Request,response:Response):
  u=current(req)
