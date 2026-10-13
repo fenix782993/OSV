@@ -1,25 +1,26 @@
-OSV BLUE COMMAND V19 — DEPLEXO + NEON DEPLOYMENT
+OSV BLUE COMMAND V20 — DB POOL GUARD + PREMIUM CACHE FIX
 
-WHAT V19 FIXES
-- No Google Fonts requests: the page starts using local/system fonts, so it does not wait on Google domains.
-- Removed the 1.87 MB startup/login background image. The Premium blue/glass theme is CSS-only.
-- Login/registration form prevents duplicate submits and shows a clear loading state.
-- Successful login returns the current user, exam request and latest attempt in one API response; the browser no longer waits for an additional /api/me request before closing the login dialog.
-- Text responses use GZip; static files receive cache headers and a new cache-busting version.
-- Kept the existing re-attestation, blacklist, per-question 3-minute timer and exam navigation lock from V18.
+WHAT CHANGED
+- Every PostgreSQL connection opened during an HTTP request is tracked.
+- Normal endpoint cleanup remains unchanged; request-finally cleanup now returns any forgotten connection to the pool even if an exception occurs.
+- PGConn.close() is idempotent, so normal cleanup and the safety cleanup can both run without double-returning a connection.
+- Static asset query versions changed to force browsers to load the current V20 CSS/JS after deployment.
+- Existing app features, routes, schema migration, and Neon database connection settings are preserved.
 
-DEPLOY IN DEPLEXO
-1. Extract this ZIP.
-2. Upload/commit all contents of this folder to the ROOT of the existing GitHub repository used by the Deplexo app. Do not put the project inside an extra nested folder.
+DEPLOY TO DEPLEXO
+1. Make a backup/export of the current Neon database before deploying any server change.
+2. Extract the ZIP. Put the CONTENTS of the ZIP at the ROOT of the existing GitHub repository used by Deplexo (main.py, requirements.txt, static/ etc.). Do not nest them inside another folder.
 3. Build command: pip install -r requirements.txt
 4. Start command: uvicorn main:app --host 0.0.0.0 --port $PORT
-5. Preserve existing Deplexo secrets/environment variables. Ensure DATABASE_URL is the full Neon PostgreSQL connection string (not a Neon API token). The app also accepts NEON_DATABASE_URL as a fallback.
-6. Keep APP_SECRET unchanged if you want existing signed cookies to remain valid; the existing cookies may still expire naturally. OWNER_PASSWORD is only used if Fenix_Dinero is created for the first time.
-7. Do not replace/remove the current Neon database or change the connection string. The application will add missing tables/columns through its existing startup migration.
-8. When deployment finishes, open /api/health and verify "database":"postgresql". Then test owner login, an ordinary staff account, role permissions, question bank, attempts and blacklist.
+5. Keep the existing Neon database. In Deplexo Environment Variables verify DATABASE_URL is the complete Neon PostgreSQL connection string, not an API token. Use the pooled connection string provided by Neon. NEON_DATABASE_URL is also accepted if DATABASE_URL is not set.
+6. Preserve APP_SECRET to keep existing signed sessions valid. Do not commit DATABASE_URL, APP_SECRET, or OWNER_PASSWORD to GitHub.
+7. Wait for a successful deployment, then open /api/health. It should return database=postgresql.
+8. Test owner login, registration with a temporary nickname, user list, and deletion of only that test account. Then check login again and confirm the original users/questions/attempts remain.
 
-NETWORK / VPN NOTE
-The web interface itself no longer loads Google Fonts or the large banner from external services. If the entire Deplexo host/app URL still fails to open without VPN, that is a host/DNS/ISP routing issue and cannot be fixed by CSS or Python changes; compare whether the base Deplexo domain opens on the same connection.
+IF PoolTimeout STILL APPEARS
+- Open Neon and confirm the database is active and the pooled connection string belongs to this project.
+- Check Neon connection/compute status and whether another deployment or application is consuming all available database connections.
+- Review new logs from the V20 deployment, not logs from an older running revision. Do not switch to SQLite as a workaround; that can make the site appear empty and split users from the existing Neon data.
 
-SAFETY
-Never commit real DATABASE_URL, APP_SECRET or OWNER_PASSWORD to GitHub. Keep them only in Deplexo Environment Variables. Do not delete old deployment/database until the new app is verified.
+VPN NOTE
+If the entire Deplexo URL fails to open without VPN, that is a hosting/DNS/network route issue; Python/CSS changes cannot force the host to be reachable. If the page opens but API requests fail, use browser developer tools Network to see which request fails.

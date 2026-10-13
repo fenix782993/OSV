@@ -1,4 +1,5 @@
 import os, sqlite3, hashlib, hmac, secrets, json, time, re, csv, io, uuid
+from contextvars import ContextVar
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
@@ -21,18 +22,34 @@ except Exception:
 ROOT=Path(__file__).resolve().parent; DB=Path(os.getenv("DB_PATH",str(ROOT/"osv.db"))); DB.parent.mkdir(parents=True,exist_ok=True)
 DATABASE_URL=(os.getenv("DATABASE_URL") or os.getenv("NEON_DATABASE_URL") or "").strip()
 USE_POSTGRES=bool(DATABASE_URL)
-app=FastAPI(title="ОСВ — Аттестация",version="2.1.0")
+DB_CONNECTIONS_IN_REQUEST = ContextVar("osv_db_connections_in_request", default=None)
+
+app=FastAPI(title="ОСВ — Аттестация",version="2.2.0")
 app.add_middleware(GZipMiddleware, minimum_size=700)
 app.mount("/static",StaticFiles(directory=ROOT/"static"),name="static")
 
 @app.middleware('http')
 async def static_cache_headers(request: Request, call_next):
-    response = await call_next(request)
-    if request.url.path.startswith('/static/'):
-        # Assets are versioned in index.html; cache aggressively to reduce repeated downloads.
-        response.headers['Cache-Control'] = 'public, max-age=604800, stale-while-revalidate=86400'
-    response.headers.setdefault('X-Content-Type-Options', 'nosniff')
-    return response
+    # Keep a request-local list of every DB connection acquired by db(). Endpoint
+    # code normally calls c.close(), but an exception before that line used to
+    # leave a connection checked out forever and eventually caused PoolTimeout.
+    acquired = []
+    context_token = DB_CONNECTIONS_IN_REQUEST.set(acquired)
+    try:
+        response = await call_next(request)
+        if request.url.path.startswith('/static/'):
+            # Versioned assets can be cached, but new deployments change version query.
+            response.headers['Cache-Control'] = 'public, max-age=604800, stale-while-revalidate=86400'
+        response.headers.setdefault('X-Content-Type-Options', 'nosniff')
+        return response
+    finally:
+        # Also runs for 4xx/5xx and uncaught endpoint exceptions.
+        for connection in reversed(acquired):
+            try:
+                connection.close()
+            except Exception:
+                pass
+        DB_CONNECTIONS_IN_REQUEST.reset(context_token)
 SECRET=os.getenv("APP_SECRET","change-this-secret-on-render").encode(); OWNER="Fenix_Dinero"; PASS_SCORE=28; QUESTION_COUNT=33; QUESTION_TIME_SECONDS=3*60; EXAM_LIMIT_SECONDS=QUESTION_COUNT*QUESTION_TIME_SECONDS
 ROLES=["Начальник ОСВ","Заместитель начальника ОСВ","Стажёр","Старший инспектор","Инспектор","Инструктор","Администратор"]
 RANKS=["Без звания","Полковник","Генерал"]
@@ -98,13 +115,16 @@ def _qmark(sql):
     return sql.replace('?', '%s') if USE_POSTGRES else sql
 
 class PGConn:
-    def __init__(self,c,release=None): self.c=c; self.release=release
+    def __init__(self,c,release=None): self.c=c; self.release=release; self.closed=False
     def execute(self,sql,params=()): return self.c.execute(_qmark(sql),params)
     def executescript(self,sql):
         for stmt in [x.strip() for x in sql.split(';') if x.strip()]: self.c.execute(stmt)
     def commit(self): self.c.commit()
     def rollback(self): self.c.rollback()
     def close(self):
+        # Idempotent because endpoint cleanup and request-finally cleanup may both run.
+        if self.closed: return
+        self.closed=True
         try: self.c.rollback()
         except Exception: pass
         if self.release:
@@ -178,8 +198,15 @@ def db():
             _pg_init_schema()
         if PG_POOL is not None:
             c=PG_POOL.getconn()
-            return PGConn(c,release=PG_POOL.putconn)
-        return PGConn(psycopg.connect(DATABASE_URL,row_factory=dict_row,connect_timeout=5))
+            wrapped=PGConn(c,release=PG_POOL.putconn)
+        else:
+            wrapped=PGConn(psycopg.connect(DATABASE_URL,row_factory=dict_row,connect_timeout=5))
+        # FastAPI propagates contextvars into sync endpoints run in its thread pool.
+        # The request middleware releases any connection left open by an exception.
+        acquired=DB_CONNECTIONS_IN_REQUEST.get()
+        if acquired is not None:
+            acquired.append(wrapped)
+        return wrapped
     c=sqlite3.connect(DB,timeout=20); c.row_factory=sqlite3.Row; c.execute('PRAGMA foreign_keys=ON')
     c.executescript("""CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY AUTOINCREMENT,nickname TEXT UNIQUE NOT NULL,mask TEXT NOT NULL DEFAULT '',position TEXT NOT NULL,password TEXT NOT NULL,role TEXT NOT NULL DEFAULT 'Стажёр',created INTEGER NOT NULL,role_approved INTEGER NOT NULL DEFAULT 0,last_login INTEGER,role_requested TEXT,rank TEXT NOT NULL DEFAULT 'Без звания',retake_required INTEGER NOT NULL DEFAULT 0,admin_prev_role TEXT,blocked INTEGER NOT NULL DEFAULT 0,block_reason TEXT,blocked_at INTEGER,blocked_by TEXT,avatar_url TEXT,archived INTEGER NOT NULL DEFAULT 0,archived_at INTEGER,archived_by TEXT); CREATE TABLE IF NOT EXISTS questions(id INTEGER PRIMARY KEY AUTOINCREMENT,body TEXT NOT NULL,options TEXT NOT NULL,correct INTEGER NOT NULL,points INTEGER NOT NULL DEFAULT 1,active INTEGER NOT NULL DEFAULT 1); CREATE TABLE IF NOT EXISTS attempts(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,score INTEGER NOT NULL DEFAULT 0,total INTEGER NOT NULL DEFAULT 33,passed INTEGER NOT NULL DEFAULT 0,answers TEXT NOT NULL DEFAULT '{}',created INTEGER NOT NULL,started INTEGER,finished INTEGER,status TEXT NOT NULL DEFAULT 'started',active_position INTEGER NOT NULL DEFAULT 0,question_started INTEGER); CREATE TABLE IF NOT EXISTS exam_requests(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'pending',created INTEGER NOT NULL,reviewed INTEGER,reviewed_by TEXT); CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER,nickname TEXT NOT NULL,event TEXT NOT NULL,details TEXT NOT NULL DEFAULT '',created INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS attempt_questions(attempt_id INTEGER NOT NULL,question_id INTEGER NOT NULL,body_snapshot TEXT NOT NULL,answer TEXT NOT NULL DEFAULT '',mark INTEGER,reviewed_by TEXT,reviewed_at INTEGER,position INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(attempt_id,question_id)); CREATE TABLE IF NOT EXISTS notifications(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,title TEXT NOT NULL,body TEXT NOT NULL,created INTEGER NOT NULL,seen INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS personnel_notes(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,kind TEXT NOT NULL,body TEXT NOT NULL,actor TEXT NOT NULL,created INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS chat_messages(id INTEGER PRIMARY KEY AUTOINCREMENT,room TEXT NOT NULL,sender_id INTEGER NOT NULL,recipient_id INTEGER,body TEXT NOT NULL,created INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS user_history(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,actor TEXT NOT NULL,field TEXT NOT NULL,old_value TEXT,new_value TEXT,created INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS user_permissions(user_id INTEGER PRIMARY KEY,permissions TEXT NOT NULL DEFAULT '[]'); CREATE TABLE IF NOT EXISTS app_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS training_attempts(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,questions TEXT NOT NULL,answers TEXT NOT NULL DEFAULT '{}',score INTEGER NOT NULL DEFAULT 0,total INTEGER NOT NULL DEFAULT 10,created INTEGER NOT NULL,finished INTEGER); CREATE TABLE IF NOT EXISTS announcements(id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,body TEXT NOT NULL,audience TEXT NOT NULL,actor TEXT NOT NULL,created INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS calendar_events(id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,body TEXT NOT NULL,starts INTEGER NOT NULL,created INTEGER NOT NULL,actor TEXT NOT NULL); CREATE TABLE IF NOT EXISTS awards(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,title TEXT NOT NULL,body TEXT NOT NULL,actor TEXT NOT NULL,created INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,user_id INTEGER NOT NULL,created INTEGER NOT NULL,last_seen INTEGER NOT NULL,ip TEXT,user_agent TEXT,revoked INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS archived_users(id INTEGER PRIMARY KEY AUTOINCREMENT,original_user_id INTEGER,nickname TEXT NOT NULL,mask TEXT,role TEXT,rank TEXT,reason TEXT,actor TEXT,created INTEGER NOT NULL,data_json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS blacklist_entries(id INTEGER PRIMARY KEY AUTOINCREMENT,nickname TEXT NOT NULL,reason TEXT NOT NULL,actor TEXT NOT NULL,created INTEGER NOT NULL,updated INTEGER);""")
     cols={r['name'] for r in c.execute('PRAGMA table_info(users)')}
